@@ -1,11 +1,15 @@
 import structlog
 import logging
 import sys
+import os
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-file_handler = logging.FileHandler('app.log')
+if not os.path.exists('logs'):
+    os.makedirs('logs')
+
+file_handler = logging.FileHandler('logs/app.log')
 file_handler.setLevel(logging.INFO)
 
 stdout_handler = logging.StreamHandler(sys.stdout)

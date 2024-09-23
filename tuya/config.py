@@ -3,5 +3,6 @@ import os
 
 load_dotenv()
 
-CLIENTID=os.getenv('CLIENTID')
+CLIENTKEY=os.getenv('CLIENTKEY')
 CLIENTSECRET=os.getenv('CLIENTSECRET')
+APIREGION=os.getenv('APIREGION')

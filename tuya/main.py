@@ -1,15 +1,13 @@
 import os
 from dotenv import load_dotenv
 
-from . import config
-from . import logger
+from . import api_client
 
 load_dotenv()
 def main():
 
-    API_KEY = os.getenv('CLIENTID')
-    API_SECRET = os.getenv('CLIENTSECRET')
-    logger.logs.info("This is info",API_KEY=config.CLIENTID,API_SECRET=config.CLIENTSECRET)
+    a = api_client.getDeviceDetails()
+    print("Print stat",a)
 
 
 if __name__ == "__main__":

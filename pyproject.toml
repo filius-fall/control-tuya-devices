@@ -1,18 +1,28 @@
-[tool.poetry]
-name = "control-tuya-devices"
+[project]
+name = "tuya-project"
 version = "0.1.0"
-description = "Access your tuya based smart devices"
-authors = ["filius-fall <sreeram596@gmail.com>"]
-license = "MIT"
+description = "Add your description here"
+authors = [
+    { name = "filius-fall", email = "sreeram596@gmail.com" }
+]
+dependencies = [
+    "python-dotenv>=1.0.1",
+    "structlog>=24.4.0",
+    "tinytuya>=1.15.1",
+]
 readme = "README.md"
-packages = [{ include = "tuya" }]
-
-[tool.poetry.dependencies]
-python = "^3.10"
-tinytuya = "^1.15.1"
-python-dotenv = "^1.0.1"
-structlog = "^24.4.0"
+requires-python = ">= 3.8"
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.rye]
+managed = true
+dev-dependencies = []
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tuya_project"]

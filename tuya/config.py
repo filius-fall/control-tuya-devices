@@ -4,7 +4,7 @@ from . import logger
 
 load_dotenv()
 
-CLIENTKEY=os.getenv('CLIENTID')
+CLIENTKEY=os.getenv('CLIENTKEY')
 CLIENTSECRET=os.getenv('CLIENTSECRET')
-APIREGION=os.getenv('CLIENTREGION')
+APIREGION=os.getenv('APIREGION')
 

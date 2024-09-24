@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "control-tuya-devices"
+version = "0.1.0"
+description = "Access your tuya based smart devices"
+authors = ["filius-fall <sreeram596@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+tinytuya = "^1.15.1"
+python-dotenv = "^1.0.1"
+structlog = "^24.4.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

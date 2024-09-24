@@ -1,4 +1,4 @@
-# Project Name
+# Control Tuya devices
 
 ## Overview
 This project interacts with the Tuya cloud to control and manage smart devices. It uses the Tuya API, and you'll need API credentials from the Tuya Developer Platform to get started.

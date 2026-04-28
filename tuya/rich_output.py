@@ -12,43 +12,31 @@ console = Console(force_terminal=True)
 
 
 def _fmt_power(val) -> str:
-    """Format a raw power value (often in deciwatts or watts)."""
+    """Format raw cur_power (Tuya reports in deciwatts, divide by 10 for watts)."""
     if val is None:
         return "—"
     try:
-        v = float(val)
-        # Tuya often reports power in deciwatts (divide by 10) or milliwatts (divide by 1000)
-        # Heuristic: if value > 1000, assume milliwatts; if > 100, assume deciwatts; else watts
-        if v > 10000:
-            return f"{v / 1000:.1f} W"
-        elif v > 1000:
-            return f"{v / 100:.1f} W"
-        else:
-            return f"{v:.1f} W"
+        return f"{float(val) / 10:.1f} W"
     except (ValueError, TypeError):
         return str(val)
 
 
 def _fmt_voltage(val) -> str:
+    """Format raw cur_voltage (Tuya reports in decivolts, divide by 10 for volts)."""
     if val is None:
         return "—"
     try:
-        v = float(val)
-        if v > 1000:
-            return f"{v / 10:.1f} V"
-        return f"{v:.1f} V"
+        return f"{float(val) / 10:.1f} V"
     except (ValueError, TypeError):
         return str(val)
 
 
 def _fmt_current(val) -> str:
+    """Format raw cur_current (Tuya reports in milliamps, divide by 1000 for amps)."""
     if val is None:
         return "—"
     try:
-        v = float(val)
-        if v > 1000:
-            return f"{v / 1000:.2f} A"
-        return f"{v:.2f} A"
+        return f"{float(val) / 1000:.2f} A"
     except (ValueError, TypeError):
         return str(val)
 

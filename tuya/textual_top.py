@@ -51,7 +51,9 @@ class TopApp(App):
 
         self.switches = device_config.load_switches()
         if not self.switches:
-            self.notify("No switches configured. Run 'tuya setup' first.", severity="error")
+            self.notify(
+                "No switches configured. Run 'tuya setup' first.", severity="error"
+            )
             return
 
         table = self.query_one("#table", DataTable)
@@ -132,7 +134,9 @@ class TopApp(App):
         version = sw.get("version", "3.3")
 
         if local_key and ip:
-            local_status = local_client.get_device_status_local(dev_id, local_key, ip, version)
+            local_status = local_client.get_device_status_local(
+                dev_id, local_key, ip, version
+            )
             if local_status and "dps" in local_status:
                 return local_status["dps"], "local", True
 
@@ -155,15 +159,11 @@ class TopApp(App):
 
     @staticmethod
     def _parse_raw_power(val) -> float | None:
+        """Convert raw cur_power (deciwatts) to watts."""
         if val is None:
             return None
         try:
-            v = float(val)
-            if v > 10000:
-                return v / 1000
-            elif v > 1000:
-                return v / 100
-            return v
+            return float(val) / 10
         except (ValueError, TypeError):
             return None
 

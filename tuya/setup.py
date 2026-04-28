@@ -18,8 +18,6 @@ def scan_local_network(timeout: float = 3.0) -> dict[str, dict]:
     log.info("Scanning local network for Tuya devices", timeout=timeout)
     try:
         found = tinytuya.deviceScan(verbose=False, scantime=timeout)
-        # tinytuya.deviceScan returns a dict keyed by IP or name depending on version.
-        # Normalise to a dict keyed by device id.
         by_id = {}
         for key, info in found.items():
             if isinstance(info, dict) and "id" in info:
@@ -44,8 +42,7 @@ def build_switches_toml(scan: bool = True) -> str:
     lines = [
         "# Tuya Smart Switch Configuration",
         "# Auto-generated from Tuya Cloud.",
-        "# Local IPs were discovered via LAN scan where possible.",
-        "# Update names and uncomment the switches you want to monitor.",
+        "# Run 'tuya setup' again to refresh the device list.",
         "",
     ]
 
@@ -56,20 +53,16 @@ def build_switches_toml(scan: bool = True) -> str:
         version = dev.get("version", "3.3")
         ip = dev.get("ip", "")
 
-        # Try to enrich from local scan if cloud didn't provide IP
         if not ip and dev_id in local:
             ip = local[dev_id].get("ip", "")
             version = local[dev_id].get("version", version)
 
-        lines.append("# [[switch]]")
-        lines.append(f'# id = "{dev_id}"')
-        lines.append(f'# name = "{name}"')
-        lines.append(f'# local_key = "{local_key}"')
-        if ip:
-            lines.append(f'# ip = "{ip}"')
-        else:
-            lines.append('# ip = "192.168.1.XXX"  # <-- fill this in')
-        lines.append(f'# version = "{version}"')
+        lines.append("[[switch]]")
+        lines.append(f'id = "{dev_id}"')
+        lines.append(f'name = "{name}"')
+        lines.append(f'local_key = "{local_key}"')
+        lines.append(f'ip = "{ip or ""}"')
+        lines.append(f'version = "{version}"')
         lines.append("")
 
     return "\n".join(lines) + "\n"

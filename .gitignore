@@ -17,6 +17,9 @@ logs/
 *.log
 *.json
 
+# User config
+switches.toml
+
 # Lock files
 *.lock
 uv.lock

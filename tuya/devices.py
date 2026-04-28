@@ -41,7 +41,7 @@ def save_example_config(path: str = DEFAULT_CONFIG_PATH):
     """Write an example switches.toml if one does not exist."""
     if Path(path).exists():
         return
-    example = '''# Tuya Smart Switch Configuration
+    example = """# Tuya Smart Switch Configuration
 # Add your switches here. You can get device IDs from the Tuya Developer Platform
 # or by running: uv run python run.py --discover
 #
@@ -66,7 +66,7 @@ version = "3.3"
 # name = "Kitchen Plug"
 # local_key = "z9y8x7w6v5u4t3s2"
 # ip = "192.168.1.46"
-'''
+"""
     with open(path, "w") as f:
         f.write(example)
     log.info("Created example switch config", path=path)

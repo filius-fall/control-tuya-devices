@@ -55,7 +55,12 @@ def fetch_logs(
 
     result = response.get("result", {})
     logs = result.get("logs", [])
-    log.info("Fetched logs", device_id=device_id, count=len(logs), fetches=response.get("fetches", 1))
+    log.info(
+        "Fetched logs",
+        device_id=device_id,
+        count=len(logs),
+        fetches=response.get("fetches", 1),
+    )
     return logs
 
 
@@ -91,7 +96,13 @@ def summarize_power_logs(device_id: str, hours: int = 24) -> dict:
             continue
 
     if not readings:
-        return {"readings": [], "avg_power": None, "max_power": None, "min_power": None, "count": 0}
+        return {
+            "readings": [],
+            "avg_power": None,
+            "max_power": None,
+            "min_power": None,
+            "count": 0,
+        }
 
     values = [v for _, v in readings]
     return {

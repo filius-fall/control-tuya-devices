@@ -1,5 +1,5 @@
 [project]
-name = "tuya-project"
+name = "control-tuya-devices"
 version = "0.2.0"
 description = "Monitor Tuya smart device power usage and export to Prometheus"
 authors = [
@@ -17,6 +17,7 @@ requires-python = ">= 3.10"
 
 [project.scripts]
 tuya-monitor = "tuya.main:main"
+tuya-top = "tuya.top:run_top"
 
 [build-system]
 requires = ["hatchling"]

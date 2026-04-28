@@ -42,11 +42,11 @@ def build_switches_toml(scan: bool = True) -> str:
     local = scan_local_network() if scan else {}
 
     lines = [
-        '# Tuya Smart Switch Configuration',
-        '# Auto-generated from Tuya Cloud.',
-        '# Local IPs were discovered via LAN scan where possible.',
-        '# Update names and uncomment the switches you want to monitor.',
-        '',
+        "# Tuya Smart Switch Configuration",
+        "# Auto-generated from Tuya Cloud.",
+        "# Local IPs were discovered via LAN scan where possible.",
+        "# Update names and uncomment the switches you want to monitor.",
+        "",
     ]
 
     for dev in cloud_devices:
@@ -70,7 +70,7 @@ def build_switches_toml(scan: bool = True) -> str:
         else:
             lines.append('# ip = "192.168.1.XXX"  # <-- fill this in')
         lines.append(f'# version = "{version}"')
-        lines.append('')
+        lines.append("")
 
     return "\n".join(lines) + "\n"
 

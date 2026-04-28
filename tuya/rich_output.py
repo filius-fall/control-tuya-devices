@@ -56,14 +56,19 @@ def _fmt_current(val) -> str:
 def _extract_power_dps(dps: dict) -> dict:
     """Extract known power-related DPs from a status dict."""
     return {
-        "power": dps.get("cur_power") or dps.get("add_ele") or dps.get("total_power") or dps.get("Power"),
+        "power": dps.get("cur_power")
+        or dps.get("add_ele")
+        or dps.get("total_power")
+        or dps.get("Power"),
         "current": dps.get("cur_current") or dps.get("Current"),
         "voltage": dps.get("cur_voltage") or dps.get("Voltage"),
         "switch": dps.get("switch_1") or dps.get("switch") or dps.get("led_switch"),
     }
 
 
-def print_device_table(devices: list[dict], statuses: dict[str, dict], title: str = "Tuya Devices") -> None:
+def print_device_table(
+    devices: list[dict], statuses: dict[str, dict], title: str = "Tuya Devices"
+) -> None:
     """Print a rich table of devices with current status.
 
     *devices* is a list of device metadata dicts (from cloud or switches.toml).
@@ -123,7 +128,10 @@ def print_summary(devices: list[dict], statuses: dict[str, dict]) -> None:
     text = Text()
     text.append(f"Devices: {total}  |  ")
     text.append(f"Online: {online}", style="green" if online == total else "yellow")
-    text.append(f"  |  Offline: {total - online}", style="red" if (total - online) > 0 else "dim")
+    text.append(
+        f"  |  Offline: {total - online}",
+        style="red" if (total - online) > 0 else "dim",
+    )
     text.append(f"  |  {now}", style="dim")
 
     console.print(Panel(text, title="Tuya Monitor", border_style="blue"))

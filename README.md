@@ -31,7 +31,7 @@ APIREGION="<region from Tuya Dashboard, e.g., in, eu, us>"
 Generate an example `switches.toml`:
 
 ```bash
-uv run python run.py --init-config
+uv run python run.py init-config
 ```
 
 Then edit `switches.toml` with your device IDs:
@@ -40,36 +40,52 @@ Then edit `switches.toml` with your device IDs:
 [[switch]]
 id = "bf1234567890abcdef1234"
 name = "Living Room Plug"
+local_key = "a1b2c3d4e5f6g7h8"
+ip = "192.168.1.45"
+version = "3.3"
 ```
 
 You can discover device IDs automatically:
 
 ```bash
-uv run python run.py --discover
+uv run python run.py discover
+```
+
+Or auto-generate the full config from the cloud (+ LAN scan):
+
+```bash
+uv run python run.py setup
 ```
 
 ## Usage
 
-### Single collection pass
+### Live top view
 
 ```bash
-uv run python run.py
+uv run tuya-top
 ```
 
-### Continuous monitoring loop
+### One-shot status table
 
 ```bash
-uv run python run.py --loop --interval 30
+uv run python run.py status
+```
+
+### Continuous monitoring loop (JSONL output)
+
+```bash
+uv run python run.py loop --interval 30
+```
+
+### Historic power data
+
+```bash
+uv run python run.py history <device_id> --hours 24 --verbose
 ```
 
 ### Data Output
 
 Readings are appended to `data/readings.jsonl` as newline-delimited JSON.
-
-## Prometheus Integration
-
-Metrics are exposed via `prometheus-client` on port `8000` by default.
-(Integration code will be added in a follow-up step.)
 
 ## Project Structure
 
@@ -77,13 +93,18 @@ Metrics are exposed via `prometheus-client` on port `8000` by default.
 .
 ├── tuya/
 │   ├── __init__.py
-│   ├── api_client.py   # Tuya Cloud API wrapper
-│   ├── config.py       # Environment variable loading
-│   ├── devices.py      # TOML switch config loader
-│   ├── logger.py       # Structured logging
-│   └── main.py         # Data collection logic
-├── run.py              # CLI entry point
-├── switches.toml       # Device configuration
-├── pyproject.toml      # uv project metadata
-└── .env                # API credentials (not committed)
+│   ├── api_client.py    # Tuya Cloud API wrapper
+│   ├── config.py        # Environment variable loading
+│   ├── devices.py       # TOML switch config loader
+│   ├── history.py       # Tuya Cloud device log fetching
+│   ├── local_client.py  # Direct LAN device polling
+│   ├── logger.py        # Structured logging
+│   ├── main.py          # Data collection logic
+│   ├── rich_output.py   # Rich console tables
+│   ├── setup.py         # Auto-config generator
+│   └── top.py           # Live-updating top view
+├── run.py               # CLI entry point
+├── switches.toml        # Device configuration
+├── pyproject.toml       # uv project metadata
+└── .env                 # API credentials (not committed)
 ```

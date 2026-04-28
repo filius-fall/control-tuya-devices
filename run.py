@@ -57,7 +57,9 @@ def cmd_setup(args):
         content = setup_module.build_switches_toml(scan=args.scan)
         with open(path, "w") as f:
             f.write(content)
-        print(f"[green]Wrote {path}[/green] — edit it to uncomment the switches you want to monitor.")
+        print(
+            f"[green]Wrote {path}[/green] — edit it to uncomment the switches you want to monitor."
+        )
     except Exception as exc:
         print_error(str(exc))
         sys.exit(1)
@@ -82,9 +84,18 @@ def cmd_history(args):
         table.add_column("Value", justify="right")
 
         table.add_row("Readings", str(summary["count"]))
-        table.add_row("Avg Power", f"{summary['avg_power']:.2f} W" if summary["avg_power"] else "—")
-        table.add_row("Max Power", f"{summary['max_power']:.2f} W" if summary["max_power"] else "—")
-        table.add_row("Min Power", f"{summary['min_power']:.2f} W" if summary["min_power"] else "—")
+        table.add_row(
+            "Avg Power",
+            f"{summary['avg_power']:.2f} W" if summary["avg_power"] else "—",
+        )
+        table.add_row(
+            "Max Power",
+            f"{summary['max_power']:.2f} W" if summary["max_power"] else "—",
+        )
+        table.add_row(
+            "Min Power",
+            f"{summary['min_power']:.2f} W" if summary["min_power"] else "—",
+        )
 
         console.print(table)
 
@@ -112,22 +123,38 @@ def cli():
 
     # top
     p_top = sub.add_parser("top", help="Live-updating top view (tuya-top)")
-    p_top.add_argument("--interval", type=float, default=2.0, help="Refresh interval in seconds (default: 2)")
+    p_top.add_argument(
+        "--interval",
+        type=float,
+        default=2.0,
+        help="Refresh interval in seconds (default: 2)",
+    )
 
     # loop
     p_loop = sub.add_parser("loop", help="Continuous monitoring loop (JSONL output)")
-    p_loop.add_argument("--interval", type=int, default=30, help="Polling interval in seconds (default: 30)")
+    p_loop.add_argument(
+        "--interval",
+        type=int,
+        default=30,
+        help="Polling interval in seconds (default: 30)",
+    )
 
     # setup
-    p_setup = sub.add_parser("setup", help="Auto-generate switches.toml from Tuya Cloud")
+    p_setup = sub.add_parser(
+        "setup", help="Auto-generate switches.toml from Tuya Cloud"
+    )
     p_setup.add_argument("--output", default="switches.toml", help="Output path")
     p_setup.add_argument("--no-scan", action="store_true", help="Skip LAN IP scan")
 
     # history
     p_hist = sub.add_parser("history", help="Show historic power data for a device")
     p_hist.add_argument("device_id", help="Device ID to query")
-    p_hist.add_argument("--hours", type=int, default=24, help="Hours of history (default: 24)")
-    p_hist.add_argument("--verbose", action="store_true", help="Show individual readings")
+    p_hist.add_argument(
+        "--hours", type=int, default=24, help="Hours of history (default: 24)"
+    )
+    p_hist.add_argument(
+        "--verbose", action="store_true", help="Show individual readings"
+    )
 
     # init-config
     sub.add_parser("init-config", help="Create an example switches.toml")

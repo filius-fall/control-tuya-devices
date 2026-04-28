@@ -2,6 +2,7 @@ import json
 import os
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from . import logger
 from . import api_client
@@ -84,7 +85,9 @@ def run_once():
     """Single-pass data collection for all configured switches."""
     switches = device_config.load_switches()
     if not switches:
-        log.error("No switches configured. Add them to switches.toml or run --discover.")
+        log.error(
+            "No switches configured. Add them to switches.toml or run --discover."
+        )
         return
 
     log.info("Starting collection run", switch_count=len(switches))
@@ -106,17 +109,16 @@ def run_loop(interval_seconds: int = 30):
     try:
         while True:
             run_once()
-            log.info("Sleeping until next collection", interval_seconds=interval_seconds)
+            log.info(
+                "Sleeping until next collection", interval_seconds=interval_seconds
+            )
             time.sleep(interval_seconds)
     except KeyboardInterrupt:
         log.info("Monitoring loop stopped by user")
 
 
 def discover():
-    """List all devices visible in the Tuya Cloud and print them.
-
-    Also attempts a local scan to show IPs for devices on the LAN.
-    """
+    """List all devices visible in the Tuya Cloud and print them."""
     cloud_devices = api_client.get_devices()
     print(f"\nFound {len(cloud_devices)} device(s) in Tuya Cloud:\n")
     for dev in cloud_devices:
@@ -127,6 +129,40 @@ def discover():
         print(f"    Version: {dev.get('version', 'N/A')}")
         print()
     return cloud_devices
+
+
+# ---------------------------------------------------------------------------
+# JSON-array persistence helpers (upstream compatibility)
+# ---------------------------------------------------------------------------
+
+
+def read_json_array(file_path):
+    if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+        return []
+
+    with open(file_path, "r", encoding="utf-8") as file:
+        try:
+            data = json.load(file)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON in {file_path}") from exc
+
+    if not isinstance(data, list):
+        raise ValueError(f"Expected {file_path} to contain a JSON array")
+
+    return data
+
+
+def append_json_array(file_path, item):
+    data = read_json_array(file_path)
+    data.append(item)
+
+    temp_path = f"{file_path}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as file:
+        json.dump(data, file, indent=2)
+        file.write("\n")
+
+    os.replace(temp_path, file_path)
+    return data
 
 
 def main():

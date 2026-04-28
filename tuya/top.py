@@ -40,7 +40,9 @@ def _fetch_all_statuses(switches: list[dict]) -> dict[str, dict]:
         ip = sw.get("ip")
         version = sw.get("version", "3.3")
         if local_key and ip:
-            local_status = local_client.get_device_status_local(dev_id, local_key, ip, version)
+            local_status = local_client.get_device_status_local(
+                dev_id, local_key, ip, version
+            )
             if local_status and "dps" in local_status:
                 dps = local_status["dps"]
                 source = "local"
@@ -121,7 +123,9 @@ def _make_table(switches: list[dict], statuses: dict[str, dict]) -> Table:
         except (ValueError, TypeError):
             pass
 
-        table.add_row(name, dev_id, status_text, power_str, current_str, voltage_str, source)
+        table.add_row(
+            name, dev_id, status_text, power_str, current_str, voltage_str, source
+        )
 
     return table, online_count, total_power
 
@@ -146,7 +150,9 @@ def run_top(interval: float = REFRESH_INTERVAL) -> None:
     """Run the live updating top view."""
     switches = device_config.load_switches()
     if not switches:
-        print("[red]No switches configured.[/red] Run: uv run python run.py --init-config")
+        print(
+            "[red]No switches configured.[/red] Run: uv run python run.py --init-config"
+        )
         return
 
     with Live(refresh_per_second=1 / interval, screen=True) as live:

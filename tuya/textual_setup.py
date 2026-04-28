@@ -104,9 +104,8 @@ class SetupApp(App):
             if query_lower and query_lower not in name.lower():
                 continue
 
-            label = f"{name}  ({dev_id})"
             sl.add_option(
-                Selection(label, dev_id, initial_state=dev_id in self._selected_ids)
+                Selection(name, dev_id, initial_state=dev_id in self._selected_ids)
             )
 
         self._rebuilding = False
@@ -116,6 +115,8 @@ class SetupApp(App):
         self._capture_selections()
         self._populate_list(event.value)
         self._update_status()
+        # Keep focus on the search box so the user can keep typing
+        self.query_one("#search", Input).focus()
 
     def _capture_selections(self) -> None:
         """Merge current SelectionList state into our tracked set."""

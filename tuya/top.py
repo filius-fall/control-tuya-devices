@@ -19,7 +19,13 @@ from . import logger
 from . import api_client
 from . import local_client
 from . import devices as device_config
-from .rich_output import _extract_power_dps, _fmt_power, _fmt_current, _fmt_voltage
+from .rich_output import (
+    _extract_power_dps,
+    _fmt_power,
+    _fmt_current,
+    _fmt_voltage,
+    _fmt_energy,
+)
 
 log = logger.logs
 console = Console(force_terminal=True)
@@ -84,11 +90,12 @@ def _make_table(switches: list[dict], statuses: dict[str, dict]) -> Table:
         expand=True,
     )
     table.add_column("Device", style="cyan", no_wrap=True, ratio=2)
-    table.add_column("ID", style="dim", no_wrap=True, ratio=3)
-    table.add_column("Status", justify="center", ratio=1)
+    table.add_column("Online", justify="center", ratio=1)
+    table.add_column("On", justify="center", ratio=1)
     table.add_column("Power", justify="right", ratio=1)
     table.add_column("Current", justify="right", ratio=1)
     table.add_column("Voltage", justify="right", ratio=1)
+    table.add_column("Energy", justify="right", ratio=1)
     table.add_column("Source", justify="center", style="dim", ratio=1)
 
     total_power = 0.0
@@ -104,30 +111,41 @@ def _make_table(switches: list[dict], statuses: dict[str, dict]) -> Table:
 
         if is_online:
             online_count += 1
-            status_text = "[green]●[/green]"
+            online_text = "[green]●[/green]"
         else:
-            status_text = "[red]✗[/red]"
+            online_text = "[red]✗[/red]"
 
         p = _extract_power_dps(dps)
+        switch_state = p.get("switch")
+        if switch_state is True:
+            on_text = "[bold green]ON[/bold green]"
+        elif switch_state is False:
+            on_text = "[dim]off[/dim]"
+        else:
+            on_text = "[yellow]?[/yellow]"
+
         power_str = _fmt_power(p.get("power"))
         current_str = _fmt_current(p.get("current"))
         voltage_str = _fmt_voltage(p.get("voltage"))
+        energy_str = _fmt_energy(p.get("energy"))
 
-        # Accumulate rough total (only if we can parse a float)
+        # Accumulate total power in watts
         try:
             raw = p.get("power")
             if raw is not None:
-                v = float(raw)
-                if v > 10000:
-                    v = v / 1000
-                elif v > 1000:
-                    v = v / 100
-                total_power += v
+                total_power += float(raw) / 10
         except (ValueError, TypeError):
             pass
 
         table.add_row(
-            name, dev_id, status_text, power_str, current_str, voltage_str, source
+            name,
+            online_text,
+            on_text,
+            power_str,
+            current_str,
+            voltage_str,
+            energy_str,
+            source,
         )
 
     return table, online_count, total_power
@@ -153,9 +171,7 @@ def run_top(interval: float = REFRESH_INTERVAL) -> None:
     """Run the live updating top view."""
     switches = device_config.load_switches()
     if not switches:
-        print(
-            "[red]No switches configured.[/red] Run: uv run python run.py --init-config"
-        )
+        console.print("[red]No switches configured.[/red] Run: tuya setup")
         return
 
     with Live(refresh_per_second=1 / interval, screen=True) as live:

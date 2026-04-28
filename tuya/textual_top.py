@@ -10,7 +10,13 @@ from . import api_client
 from . import local_client
 from . import devices as device_config
 from . import logger
-from .rich_output import _extract_power_dps, _fmt_power, _fmt_current, _fmt_voltage
+from .rich_output import (
+    _extract_power_dps,
+    _fmt_power,
+    _fmt_current,
+    _fmt_voltage,
+    _fmt_energy,
+)
 
 log = logger.logs
 
@@ -57,7 +63,9 @@ class TopApp(App):
             return
 
         table = self.query_one("#table", DataTable)
-        table.add_columns("Device", "Status", "Power", "Current", "Voltage", "Source")
+        table.add_columns(
+            "Device", "Online", "On", "Power", "Current", "Voltage", "Energy", "Source"
+        )
         table.zebra_stripes = True
 
         for sw in self.switches:
@@ -95,14 +103,23 @@ class TopApp(App):
 
             if online:
                 online_count += 1
-                status = "[green]●[/green]"
+                online_text = "[green]●[/green]"
             else:
-                status = "[red]✗[/red]"
+                online_text = "[red]✗[/red]"
 
             p = _extract_power_dps(dps)
+            switch_state = p.get("switch")
+            if switch_state is True:
+                on_text = "[bold green]ON[/bold green]"
+            elif switch_state is False:
+                on_text = "[dim]off[/dim]"
+            else:
+                on_text = "[yellow]?[/yellow]"
+
             power_str = _fmt_power(p.get("power"))
             current_str = _fmt_current(p.get("current"))
             voltage_str = _fmt_voltage(p.get("voltage"))
+            energy_str = _fmt_energy(p.get("energy"))
 
             # Track raw power for sparkline
             raw_power = self._parse_raw_power(p.get("power"))
@@ -112,7 +129,16 @@ class TopApp(App):
                     self.history[dev_id].pop(0)
                 total_power += raw_power
 
-            table.add_row(name, status, power_str, current_str, voltage_str, source)
+            table.add_row(
+                name,
+                online_text,
+                on_text,
+                power_str,
+                current_str,
+                voltage_str,
+                energy_str,
+                source,
+            )
 
             # Update sparkline
             if spark_idx < len(spark_container.children):

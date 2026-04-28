@@ -5,6 +5,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from . import api_client
+from . import devices as device_config
 from . import setup as setup_module
 from . import logger
 
@@ -13,7 +14,10 @@ console = Console()
 
 
 def run_interactive_setup(path: str = "switches.toml", scan: bool = True) -> None:
-    """Run an interactive wizard to select devices and write switches.toml."""
+    """Run an interactive wizard to select devices and write switches.toml.
+
+    Devices already present in the existing switches.toml are pre-selected.
+    """
     console.print(
         Panel.fit(
             "[bold blue]Tuya Device Setup[/bold blue]\n"
@@ -35,6 +39,19 @@ def run_interactive_setup(path: str = "switches.toml", scan: bool = True) -> Non
         )
         return
 
+    # Load existing config to pre-select already-monitored devices
+    existing_switches = device_config.load_switches(path)
+    existing_ids = {sw.get("id") for sw in existing_switches if sw.get("id")}
+    if existing_ids:
+        console.print(
+            f"[dim]Pre-selected {len(existing_ids)} device(s) from existing {path}.[/dim]"
+        )
+
+    # Preserve existing IPs if cloud doesn't provide them
+    existing_ips = {
+        sw.get("id"): sw.get("ip", "") for sw in existing_switches if sw.get("id")
+    }
+
     # Sort alphabetically by name
     sorted_devices = sorted(cloud_devices, key=lambda d: d.get("name", "").lower())
 
@@ -47,7 +64,10 @@ def run_interactive_setup(path: str = "switches.toml", scan: bool = True) -> Non
         display = (
             f"{name}  ({dev_id[:12]}...)" if len(dev_id) > 12 else f"{name}  ({dev_id})"
         )
-        choices.append(questionary.Choice(title=display, value=dev_id, checked=False))
+        is_checked = dev_id in existing_ids
+        choices.append(
+            questionary.Choice(title=display, value=dev_id, checked=is_checked)
+        )
 
     selected_ids = questionary.checkbox(
         "Select devices to monitor (space to toggle, type to filter):",
@@ -86,6 +106,10 @@ def run_interactive_setup(path: str = "switches.toml", scan: bool = True) -> Non
         if not ip and dev_id in local:
             ip = local[dev_id].get("ip", "")
 
+        # Preserve IP from existing config if still missing
+        if not ip and dev_id in existing_ips:
+            ip = existing_ips[dev_id]
+
         lines.append("[[switch]]")
         lines.append(f'id = "{dev_id}"')
         lines.append(f'name = "{name}"')
@@ -103,7 +127,11 @@ def run_interactive_setup(path: str = "switches.toml", scan: bool = True) -> Non
         f"\n[green]Wrote {path}[/green] with {len(selected_ids)} device(s) enabled."
     )
     if any(
-        not (dev.get("ip") or local.get(dev.get("id"), {}).get("ip"))
+        not (
+            dev.get("ip")
+            or local.get(dev.get("id"), {}).get("ip")
+            or existing_ips.get(dev.get("id"))
+        )
         for dev in sorted_devices
         if dev.get("id") in selected_set
     ):

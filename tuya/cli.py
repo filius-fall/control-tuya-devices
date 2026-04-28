@@ -4,6 +4,7 @@ import sys
 from tuya.main import run_once, run_loop
 from tuya.devices import save_example_config
 from tuya import setup as setup_module
+from tuya import interactive_setup
 from tuya import top as top_module
 from tuya import history as history_module
 from tuya import api_client
@@ -54,12 +55,15 @@ def cmd_setup(args):
     """Auto-generate switches.toml from Tuya Cloud (and optional LAN scan)."""
     path = args.output or "switches.toml"
     try:
-        content = setup_module.build_switches_toml(scan=args.scan)
-        with open(path, "w") as f:
-            f.write(content)
-        print(
-            f"[green]Wrote {path}[/green] — edit it to uncomment the switches you want to monitor."
-        )
+        if args.non_interactive:
+            content = setup_module.build_switches_toml(scan=args.scan)
+            with open(path, "w") as f:
+                f.write(content)
+            print(
+                f"[green]Wrote {path}[/green] — edit it to uncomment the switches you want to monitor."
+            )
+        else:
+            interactive_setup.run_interactive_setup(path=path, scan=args.scan)
     except Exception as exc:
         print_error(str(exc))
         sys.exit(1)
@@ -150,6 +154,12 @@ def cli():
         action="store_false",
         default=True,
         help="Skip LAN IP scan",
+    )
+    p_setup.add_argument(
+        "--non-interactive",
+        action="store_true",
+        default=False,
+        help="Write all devices commented-out instead of interactive selection",
     )
 
     # history

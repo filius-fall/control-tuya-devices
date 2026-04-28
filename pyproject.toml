@@ -1,7 +1,7 @@
 [project]
-name = "tuya-project"
+name = "control-tuya-devices"
 version = "0.1.0"
-description = "Add your description here"
+description = "Control and inspect Tuya devices using the Tuya cloud API"
 authors = [
     { name = "filius-fall", email = "sreeram596@gmail.com" }
 ]
@@ -25,4 +25,4 @@ dev-dependencies = []
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/tuya_project"]
+packages = ["tuya"]

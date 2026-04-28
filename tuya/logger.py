@@ -3,37 +3,35 @@ import logging
 import sys
 import os
 
-logger = logging.getLogger()
+logger = logging.getLogger("tuya")
 logger.setLevel(logging.INFO)
+logger.propagate = False
 
-if not os.path.exists('logs'):
-    os.makedirs('logs')
+os.makedirs("logs", exist_ok=True)
 
-file_handler = logging.FileHandler('logs/app.log')
-file_handler.setLevel(logging.INFO)
+if not logger.handlers:
+    file_handler = logging.FileHandler("logs/app.log")
+    file_handler.setLevel(logging.INFO)
 
-stdout_handler = logging.StreamHandler(sys.stdout)
-stdout_handler.setLevel(logging.INFO)
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setLevel(logging.INFO)
 
-formatter = logging.Formatter('%(message)s')
-file_handler.setFormatter(formatter)
-stdout_handler.setFormatter(formatter)
+    formatter = logging.Formatter("%(message)s")
+    file_handler.setFormatter(formatter)
+    stdout_handler.setFormatter(formatter)
 
-logger.addHandler(file_handler)
-logger.addHandler(stdout_handler)
-
-
+    logger.addHandler(file_handler)
+    logger.addHandler(stdout_handler)
 
 structlog.configure(
     processors=[
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
         structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.JSONRenderer()
+        structlog.processors.JSONRenderer(),
     ],
     context_class=dict,
     logger_factory=structlog.stdlib.LoggerFactory(),
-    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO)
-
+    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
 )
-logs = structlog.get_logger()
+logs = structlog.get_logger("tuya")

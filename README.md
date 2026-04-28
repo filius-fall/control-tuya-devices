@@ -1,4 +1,4 @@
-# Control Tuya devices
+# Control Tuya Devices
 
 ## Overview
 This project interacts with the Tuya cloud to control and manage smart devices. It uses the Tuya API, and you'll need API credentials from the Tuya Developer Platform to get started.
@@ -25,8 +25,8 @@ poetry --version
 1. Clone this repository:
 
     ```bash
-    git clone https://github.com/your-username/project-name.git
-    cd project-name
+    git clone git@github.com:filius-fall/control-tuya-devices.git
+    cd control-tuya-devices
     ```
 
 2. Use Poetry to install dependencies:
@@ -52,9 +52,9 @@ This will create a virtual environment and install all required packages listed 
 Create a `.env` file in the root of your project directory, and add the following credentials:
 
 ```bash
-CLIENTID="<API Client ID from Tuya dashboard>"
+CLIENTKEY="<API Client ID from Tuya dashboard>"
 CLIENTSECRET="<API Client Secret from Tuya dashboard>"
-CLIENTREGION="<region selected during project creation, e.g., 'in', 'eu'>"
+APIREGION="<region selected during project creation, e.g., 'in', 'eu'>"
 ```
 
 ### Step 5: Running the Project
@@ -66,4 +66,3 @@ poetry run python run.py
 ```
 
 ---
-

@@ -1,40 +1,47 @@
 import os
 import json
-from dotenv import load_dotenv
 
 from . import logger
 from . import api_client
 
-load_dotenv()
-def main():
 
-    a = api_client.getDeviceDetails()
+def read_json_array(file_path):
+    if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+        return []
 
-    os.makedirs('data',exist_ok=True)
-    file_path = os.path.join('data','api_response.json')
-
-    with open(file_path, 'a+') as f:
-        
-        f.seek(0)
-
+    with open(file_path, "r", encoding="utf-8") as file:
         try:
-            data = json.load(f)
+            data = json.load(file)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON in {file_path}") from exc
 
-        except json.JSONDecodeError:
-            logger.logs.info("Exception is created and a new json will be created")
-            data = []
-        
-        logger.logs.info("Before Data append",data=data)
-        data.append(a)
-        json.dump(data,f)
-        logger.logs.info("After data Append",data=data)
+    if not isinstance(data, list):
+        raise ValueError(f"Expected {file_path} to contain a JSON array")
+
+    return data
 
 
-        
-    
+def append_json_array(file_path, item):
+    data = read_json_array(file_path)
+    data.append(item)
 
-        
-    
+    temp_path = f"{file_path}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as file:
+        json.dump(data, file, indent=2)
+        file.write("\n")
+
+    os.replace(temp_path, file_path)
+    return data
+
+
+def main():
+    devices = api_client.get_device_details()
+
+    os.makedirs("data", exist_ok=True)
+    file_path = os.path.join("data", "api_response.json")
+
+    data = append_json_array(file_path, devices)
+    logger.logs.info("Saved Tuya API response", file_path=file_path, records=len(data))
 
 
 if __name__ == "__main__":

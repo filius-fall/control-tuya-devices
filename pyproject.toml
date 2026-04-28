@@ -16,7 +16,7 @@ readme = "README.md"
 requires-python = ">= 3.10"
 
 [project.scripts]
-tuya-monitor = "tuya.main:main"
+tuya = "tuya.cli:main"
 tuya-top = "tuya.top:run_top"
 
 [build-system]

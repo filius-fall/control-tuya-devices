@@ -6,30 +6,12 @@ from rich.console import Console
 from tuya.main import run_once, run_loop
 from tuya.devices import save_example_config
 from tuya import setup as setup_module
-from tuya import interactive_setup
+from tuya import textual_setup
 from tuya import top as top_module
 from tuya import history as history_module
-from tuya import api_client
 from tuya.rich_output import print_device_table, print_summary, print_error
 
-console = Console()
-
-
-def cmd_discover():
-    """Discover and list all Tuya Cloud devices."""
-    try:
-        devices = api_client.get_devices()
-        console.print(f"\nFound {len(devices)} device(s) in Tuya Cloud:\n")
-        for dev in devices:
-            console.print(f"  - Name:    {dev.get('name', 'N/A')}")
-            console.print(f"    ID:      {dev.get('id')}")
-            console.print(f"    Key:     {dev.get('key', 'N/A')}")
-            console.print(f"    IP:      {dev.get('ip', 'N/A')}")
-            console.print(f"    Version: {dev.get('version', 'N/A')}")
-            console.print()
-    except Exception as exc:
-        print_error(str(exc))
-        sys.exit(1)
+console = Console(force_terminal=True)
 
 
 def cmd_status():
@@ -39,7 +21,7 @@ def cmd_status():
 
     switches = device_config.load_switches()
     if not switches:
-        print_error("No switches configured. Run 'tuya init-config' or 'tuya setup'.")
+        print_error("No switches configured. Run 'tuya setup'.")
         sys.exit(1)
 
     statuses = {}
@@ -64,10 +46,10 @@ def cmd_setup(args):
             with open(path, "w") as f:
                 f.write(content)
             console.print(
-                f"[green]Wrote {path}[/green] — edit it to uncomment the switches you want to monitor."
+                f"[green]Wrote {path}[/green] with all devices enabled."
             )
         else:
-            interactive_setup.run_interactive_setup(path=path, scan=args.scan)
+            textual_setup.run_textual_setup(path=path, scan=args.scan)
     except Exception as exc:
         print_error(str(exc))
         sys.exit(1)
@@ -121,9 +103,6 @@ def cli():
     parser = argparse.ArgumentParser(description="Tuya Smart Switch Power Monitor")
     sub = parser.add_subparsers(dest="command", help="Commands")
 
-    # discover
-    sub.add_parser("discover", help="List all devices visible in the Tuya Cloud")
-
     # status
     sub.add_parser("status", help="Show a one-shot rich table of current device status")
 
@@ -161,7 +140,7 @@ def cli():
         "--non-interactive",
         action="store_true",
         default=False,
-        help="Write all devices commented-out instead of interactive selection",
+        help="Write all devices instead of interactive selection",
     )
 
     # history
@@ -174,14 +153,9 @@ def cli():
         "--verbose", action="store_true", help="Show individual readings"
     )
 
-    # init-config
-    sub.add_parser("init-config", help="Create an example switches.toml")
-
     args = parser.parse_args()
 
-    if args.command == "discover":
-        cmd_discover()
-    elif args.command == "status":
+    if args.command == "status":
         cmd_status()
     elif args.command == "top":
         top_module.run_top(interval=args.interval)
@@ -191,8 +165,6 @@ def cli():
         cmd_setup(args)
     elif args.command == "history":
         cmd_history(args)
-    elif args.command == "init-config":
-        save_example_config()
     else:
         # Default: show help
         parser.print_help()

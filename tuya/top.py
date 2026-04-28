@@ -13,6 +13,8 @@ from rich.layout import Layout
 from rich.text import Text
 from rich import box
 
+from rich.console import Console
+
 from . import logger
 from . import api_client
 from . import local_client
@@ -20,6 +22,7 @@ from . import devices as device_config
 from .rich_output import _extract_power_dps, _fmt_power, _fmt_current, _fmt_voltage
 
 log = logger.logs
+console = Console(force_terminal=True)
 
 REFRESH_INTERVAL = 2.0
 

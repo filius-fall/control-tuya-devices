@@ -8,7 +8,7 @@ from rich.panel import Panel
 from rich.text import Text
 from rich import box
 
-console = Console()
+console = Console(force_terminal=True)
 
 
 def _fmt_power(val) -> str:

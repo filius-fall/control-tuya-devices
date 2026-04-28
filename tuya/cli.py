@@ -1,6 +1,8 @@
 import argparse
 import sys
 
+from rich.console import Console
+
 from tuya.main import run_once, run_loop
 from tuya.devices import save_example_config
 from tuya import setup as setup_module
@@ -10,19 +12,21 @@ from tuya import history as history_module
 from tuya import api_client
 from tuya.rich_output import print_device_table, print_summary, print_error
 
+console = Console()
+
 
 def cmd_discover():
     """Discover and list all Tuya Cloud devices."""
     try:
         devices = api_client.get_devices()
-        print(f"\nFound {len(devices)} device(s) in Tuya Cloud:\n")
+        console.print(f"\nFound {len(devices)} device(s) in Tuya Cloud:\n")
         for dev in devices:
-            print(f"  - Name:    {dev.get('name', 'N/A')}")
-            print(f"    ID:      {dev.get('id')}")
-            print(f"    Key:     {dev.get('key', 'N/A')}")
-            print(f"    IP:      {dev.get('ip', 'N/A')}")
-            print(f"    Version: {dev.get('version', 'N/A')}")
-            print()
+            console.print(f"  - Name:    {dev.get('name', 'N/A')}")
+            console.print(f"    ID:      {dev.get('id')}")
+            console.print(f"    Key:     {dev.get('key', 'N/A')}")
+            console.print(f"    IP:      {dev.get('ip', 'N/A')}")
+            console.print(f"    Version: {dev.get('version', 'N/A')}")
+            console.print()
     except Exception as exc:
         print_error(str(exc))
         sys.exit(1)
@@ -59,7 +63,7 @@ def cmd_setup(args):
             content = setup_module.build_switches_toml(scan=args.scan)
             with open(path, "w") as f:
                 f.write(content)
-            print(
+            console.print(
                 f"[green]Wrote {path}[/green] — edit it to uncomment the switches you want to monitor."
             )
         else:
@@ -71,11 +75,9 @@ def cmd_setup(args):
 
 def cmd_history(args):
     """Show historic power data for a device."""
-    from rich.console import Console
     from rich.table import Table
     from rich import box
 
-    console = Console()
     try:
         summary = history_module.summarize_power_logs(args.device_id, hours=args.hours)
         table = Table(

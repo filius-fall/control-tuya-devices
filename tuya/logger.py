@@ -13,15 +13,10 @@ if not logger.handlers:
     file_handler = logging.FileHandler("logs/app.log")
     file_handler.setLevel(logging.INFO)
 
-    stdout_handler = logging.StreamHandler(sys.stdout)
-    stdout_handler.setLevel(logging.INFO)
-
     formatter = logging.Formatter("%(message)s")
     file_handler.setFormatter(formatter)
-    stdout_handler.setFormatter(formatter)
 
     logger.addHandler(file_handler)
-    logger.addHandler(stdout_handler)
 
 structlog.configure(
     processors=[

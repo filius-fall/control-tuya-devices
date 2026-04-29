@@ -7,7 +7,7 @@ default:
 
 # Run the development server with auto-reload and debug logging
 dev:
-    TUYA_LOG_LEVEL=DEBUG uv run gunicorn -w 1 -b 127.0.0.1:8000 --reload tuya.web:app
+    TUYA_LOG_LEVEL=DEBUG FLASK_APP=tuya.web:flask_app uv run flask run --host=127.0.0.1 --port=8000 --debug
 
 # Run the production server (no reload, INFO logs)
 run:

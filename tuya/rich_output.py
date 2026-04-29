@@ -43,13 +43,34 @@ def _fmt_current(val) -> str:
 
 def _extract_power_dps(dps: dict) -> dict:
     """Extract known power-related DPs from a status dict."""
-    return {
-        "power": dps.get("cur_power") or dps.get("Power"),
-        "energy": dps.get("add_ele") or dps.get("total_power") or dps.get("elec_money"),
-        "current": dps.get("cur_current") or dps.get("Current"),
-        "voltage": dps.get("cur_voltage") or dps.get("Voltage"),
-        "switch": dps.get("switch_1") or dps.get("switch") or dps.get("led_switch"),
-    }
+    result: dict[str, any] = {}
+
+    for key in ("cur_power", "Power"):
+        if key in dps:
+            result["power"] = dps[key]
+            break
+
+    for key in ("add_ele", "total_power", "elec_money"):
+        if key in dps:
+            result["energy"] = dps[key]
+            break
+
+    for key in ("cur_current", "Current"):
+        if key in dps:
+            result["current"] = dps[key]
+            break
+
+    for key in ("cur_voltage", "Voltage"):
+        if key in dps:
+            result["voltage"] = dps[key]
+            break
+
+    for key in ("switch_1", "switch", "led_switch"):
+        if key in dps:
+            result["switch"] = dps[key]
+            break
+
+    return result
 
 
 def _fmt_energy(val) -> str:

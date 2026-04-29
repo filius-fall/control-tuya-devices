@@ -1,0 +1,17 @@
+{
+  "name": "Tuya Power Monitor",
+  "short_name": "Tuya",
+  "description": "Monitor and control Tuya smart devices",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0814",
+  "theme_color": "#0a0814",
+  "icons": [
+    {
+      "src": "/static/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

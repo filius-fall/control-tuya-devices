@@ -3,7 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0a0814">
+<meta name="description" content="Tuya Power Monitor — Smart device dashboard">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tuya">
 <title>Tuya Control Panel</title>
+<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='icon.svg') }}">
+<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icon.svg') }}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
@@ -147,6 +155,49 @@
   let sortKey = 'name';
   let sortAsc = true;
 
+  // -------------------------------------------------------------------------
+  // URL persistence
+  // -------------------------------------------------------------------------
+  function readFiltersFromURL() {
+    const params = new URLSearchParams(window.location.search);
+    const search = params.get('search') || '';
+    const room = params.get('room') || 'all';
+    const filter = params.get('filter') || 'all';
+    const sort = params.get('sort') || 'name';
+    const dir = params.get('dir') || 'asc';
+
+    searchInput.value = search;
+    roomFilter.value = room;
+
+    toggleBtns.forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.filter === filter);
+      if (btn.dataset.filter === filter) activeFilter = filter;
+    });
+
+    sortSelect.value = sort;
+    sortKey = sort;
+
+    sortAsc = dir !== 'desc';
+    sortDirBtn.textContent = sortAsc ? '↓' : '↑';
+  }
+
+  function writeFiltersToURL() {
+    const params = new URLSearchParams();
+    const search = searchInput.value.trim();
+    if (search) params.set('search', search);
+    if (roomFilter.value !== 'all') params.set('room', roomFilter.value);
+    if (activeFilter !== 'all') params.set('filter', activeFilter);
+    if (sortKey !== 'name') params.set('sort', sortKey);
+    if (!sortAsc) params.set('dir', 'desc');
+
+    const qs = params.toString();
+    const url = qs ? '?' + qs : window.location.pathname;
+    history.replaceState(null, '', url);
+  }
+
+  // -------------------------------------------------------------------------
+  // Filtering & sorting
+  // -------------------------------------------------------------------------
   function applyFilters() {
     const query = searchInput.value.trim().toLowerCase();
     const roomQuery = roomFilter.value;
@@ -159,17 +210,8 @@
 
       let visible = true;
 
-      // Name search
-      if (query && !name.includes(query)) {
-        visible = false;
-      }
-
-      // Room filter
-      if (roomQuery !== 'all' && room !== roomQuery) {
-        visible = false;
-      }
-
-      // State toggle
+      if (query && !name.includes(query)) visible = false;
+      if (roomQuery !== 'all' && room !== roomQuery) visible = false;
       if (activeFilter === 'on' && !on) visible = false;
       if (activeFilter === 'off' && on) visible = false;
       if (activeFilter === 'online' && !online) visible = false;
@@ -179,6 +221,7 @@
     });
 
     updateCounts();
+    writeFiltersToURL();
   }
 
   function applySort() {
@@ -188,7 +231,6 @@
       let va = a.dataset[sortKey];
       let vb = b.dataset[sortKey];
 
-      // Numeric fields
       if (['power', 'current', 'voltage', 'energy'].includes(sortKey)) {
         va = parseFloat(va);
         vb = parseFloat(vb);
@@ -211,19 +253,12 @@
     document.getElementById('total-count').textContent = visible.length;
   }
 
-  // Search
-  searchInput.addEventListener('input', () => {
-    applyFilters();
-    applySort();
-  });
+  // -------------------------------------------------------------------------
+  // Event listeners
+  // -------------------------------------------------------------------------
+  searchInput.addEventListener('input', () => { applyFilters(); applySort(); });
+  roomFilter.addEventListener('change', () => { applyFilters(); applySort(); });
 
-  // Room filter
-  roomFilter.addEventListener('change', () => {
-    applyFilters();
-    applySort();
-  });
-
-  // Toggles
   toggleBtns.forEach(btn => {
     btn.addEventListener('click', () => {
       toggleBtns.forEach(b => b.classList.remove('active'));
@@ -234,23 +269,22 @@
     });
   });
 
-  // Sort key
   sortSelect.addEventListener('change', () => {
     sortKey = sortSelect.value;
     applySort();
+    writeFiltersToURL();
   });
 
-  // Sort direction
   sortDirBtn.addEventListener('click', () => {
     sortAsc = !sortAsc;
     sortDirBtn.textContent = sortAsc ? '↓' : '↑';
     applySort();
+    writeFiltersToURL();
   });
 
-  // Initial sort
-  applySort();
-
+  // -------------------------------------------------------------------------
   // Toggle modal
+  // -------------------------------------------------------------------------
   const modal = document.getElementById('toggle-modal');
   const modalName = document.getElementById('modal-device-name');
   const modalState = document.getElementById('modal-current-state');
@@ -288,7 +322,6 @@
       });
       const data = await resp.json();
       if (data.success) {
-        // Update the card locally for immediate feedback
         const card = cards.find(c => c.dataset.id === currentDeviceId);
         closeModal();
         if (card) {
@@ -300,7 +333,6 @@
           badge.className = state ? 'badge on' : 'badge off';
           badge.textContent = state ? 'ON' : 'off';
           statusDiv.appendChild(badge);
-          // Re-apply filters in case the active filter is "on" / "off"
           applyFilters();
           applySort();
         }
@@ -322,6 +354,20 @@
   modal.addEventListener('click', (e) => {
     if (e.target === modal) closeModal();
   });
+
+  // -------------------------------------------------------------------------
+  // PWA service worker
+  // -------------------------------------------------------------------------
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('{{ url_for("static", filename="sw.js") }}');
+  }
+
+  // -------------------------------------------------------------------------
+  // Init
+  // -------------------------------------------------------------------------
+  readFiltersFromURL();
+  applyFilters();
+  applySort();
 })();
 </script>
 

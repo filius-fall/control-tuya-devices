@@ -16,6 +16,7 @@ data/
 logs/
 *.log
 *.json
+!tuya/static/*.json
 
 # User config
 switches.toml

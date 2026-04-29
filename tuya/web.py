@@ -117,6 +117,43 @@ def _resolve_room(dev_id: str) -> str:
     return room_config.resolve_room(dev_id, _device_rooms.get(dev_id))
 
 
+def _extract_dps_from_status(status: dict | None) -> dict | None:
+    """Extract DPs from a Tuya Cloud status response, or None if offline."""
+    if not status or not isinstance(status, dict):
+        return None
+
+    # API error / device explicitly offline
+    if not status.get("success", True):
+        return None
+
+    result = status.get("result")
+    if result is None:
+        return None
+
+    # Result is a list of {code, value} — the common format
+    if isinstance(result, list):
+        return {
+            item["code"]: item.get("value")
+            for item in result
+            if isinstance(item, dict) and "code" in item
+        }
+
+    # Result is a dict — may contain an "online" flag and "status" array
+    if isinstance(result, dict):
+        if result.get("online") is False:
+            return None
+        status_list = result.get("status") or result.get("result") or []
+        if isinstance(status_list, list):
+            return {
+                item["code"]: item.get("value")
+                for item in status_list
+                if isinstance(item, dict) and "code" in item
+            }
+        return result
+
+    return None
+
+
 def _poll_device(dev: dict) -> dict:
     """Poll a single device and return a status dict."""
     dev_id = dev.get("id", "")
@@ -130,28 +167,23 @@ def _poll_device(dev: dict) -> dict:
     dps = None
     source = "cloud"
 
-    if local_key and ip:
-        local_status = local_client.get_device_status_local(
-            dev_id, local_key, ip, version
-        )
-        if local_status and "dps" in local_status:
-            dps = local_status["dps"]
-            source = "local"
+    try:
+        if local_key and ip:
+            local_status = local_client.get_device_status_local(
+                dev_id, local_key, ip, version
+            )
+            if local_status and "dps" in local_status:
+                dps = local_status["dps"]
+                source = "local"
+    except Exception:
+        log.warning("Local poll failed", device_id=dev_id, exc_info=True)
 
     if dps is None:
-        cloud_status = api_client.get_device_status(dev_id)
-        if cloud_status and isinstance(cloud_status, dict):
-            result = cloud_status.get("result", [])
-            if isinstance(result, list):
-                dps = {
-                    item["code"]: item.get("value")
-                    for item in result
-                    if isinstance(item, dict) and "code" in item
-                }
-            elif isinstance(result, dict):
-                dps = result
-            else:
-                dps = {}
+        try:
+            cloud_status = api_client.get_device_status(dev_id)
+            dps = _extract_dps_from_status(cloud_status)
+        except Exception:
+            log.warning("Cloud poll failed", device_id=dev_id, exc_info=True)
 
     if not dps:
         ONLINE.labels(device=name, room=room).set(0)

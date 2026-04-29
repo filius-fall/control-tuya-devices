@@ -289,8 +289,21 @@
       const data = await resp.json();
       if (data.success) {
         closeModal();
-        // Refresh the page to show updated state
-        window.location.reload();
+        // Update the card locally for immediate feedback
+        const card = cards.find(c => c.dataset.id === currentDeviceId);
+        if (card) {
+          card.dataset.on = String(state);
+          const statusDiv = card.querySelector('.device-status');
+          const existing = statusDiv.querySelector('.badge.on, .badge.off');
+          if (existing) existing.remove();
+          const badge = document.createElement('span');
+          badge.className = state ? 'badge on' : 'badge off';
+          badge.textContent = state ? 'ON' : 'off';
+          statusDiv.appendChild(badge);
+          // Re-apply filters in case the active filter is "on" / "off"
+          applyFilters();
+          applySort();
+        }
       } else {
         modalError.textContent = data.error || 'Toggle failed';
       }

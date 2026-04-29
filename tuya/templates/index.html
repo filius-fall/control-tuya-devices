@@ -15,6 +15,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<style>
+.device-card[data-loading="true"] .metric-value { color: var(--text-dim); animation: pulse 1.5s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.8; } }
+</style>
 </head>
 <body>
 
@@ -26,7 +30,7 @@
   <div class="meta">
     <div class="stat-pill online">
       <span class="dot"></span>
-      <span id="online-count">{{ online_count }}</span>/<span id="total-count">{{ total_count }}</span> online
+      <span id="online-count">0</span>/<span id="total-count">{{ total_count }}</span> online
     </div>
     <form method="post" action="{{ url_for('refresh') }}" class="refresh-form">
       <button type="submit" class="btn-refresh">Rediscover</button>
@@ -72,16 +76,11 @@
 <main class="dashboard" id="dashboard">
   {% for dev in devices %}
   <article
-    class="device-card {% if not dev.online %}offline{% endif %}"
+    class="device-card"
     data-id="{{ dev.id }}"
     data-name="{{ dev.name | lower }}"
     data-room="{{ dev.room | lower }}"
-    data-online="{{ 'true' if dev.online else 'false' }}"
-    data-on="{{ 'true' if dev.on else 'false' }}"
-    data-power="{{ dev.power | replace(' W', '') | replace('—', '-1') }}"
-    data-current="{{ dev.current | replace(' A', '') | replace('—', '-1') }}"
-    data-voltage="{{ dev.voltage | replace(' V', '') | replace('—', '-1') }}"
-    data-energy="{{ dev.energy | replace(' kWh', '') | replace('—', '-1') }}"
+    data-loading="true"
   >
     <div class="card-header">
       <div class="card-title">
@@ -89,35 +88,26 @@
         <span class="room-name">{{ dev.room }}</span>
       </div>
       <div class="device-status">
-        {% if dev.online %}
-          <span class="badge online">● online</span>
-        {% else %}
-          <span class="badge offline">✗ offline</span>
-        {% endif %}
-        {% if dev.on %}
-          <span class="badge on">ON</span>
-        {% elif dev.on is false %}
-          <span class="badge off">off</span>
-        {% endif %}
+        <span class="badge offline">loading</span>
       </div>
     </div>
 
     <div class="metrics-grid">
       <div class="metric">
         <span class="metric-label">Power</span>
-        <span class="metric-value {% if dev.power != '—' %}active{% endif %}">{{ dev.power }}</span>
+        <span class="metric-value">—</span>
       </div>
       <div class="metric">
         <span class="metric-label">Current</span>
-        <span class="metric-value">{{ dev.current }}</span>
+        <span class="metric-value">—</span>
       </div>
       <div class="metric">
         <span class="metric-label">Voltage</span>
-        <span class="metric-value">{{ dev.voltage }}</span>
+        <span class="metric-value">—</span>
       </div>
       <div class="metric">
         <span class="metric-label">Energy</span>
-        <span class="metric-value energy">{{ dev.energy }}</span>
+        <span class="metric-value energy">—</span>
       </div>
     </div>
   </article>
@@ -143,8 +133,9 @@
 
 <script>
 (function() {
+  const POLL_MS = {{ poll_interval }} * 1000;
   const dashboard = document.getElementById('dashboard');
-  const cards = Array.from(dashboard.querySelectorAll('.device-card'));
+  let cards = Array.from(dashboard.querySelectorAll('.device-card'));
   const searchInput = document.getElementById('search');
   const roomFilter = document.getElementById('room-filter');
   const toggleBtns = document.querySelectorAll('.toggle-btn');
@@ -251,6 +242,70 @@
     const visibleOnline = visible.filter(c => c.dataset.online === 'true');
     document.getElementById('online-count').textContent = visibleOnline.length;
     document.getElementById('total-count').textContent = visible.length;
+  }
+
+  // -------------------------------------------------------------------------
+  // Async data loading
+  // -------------------------------------------------------------------------
+  function updateCard(card, dev) {
+    card.dataset.loading = 'false';
+    card.dataset.online = String(dev.online);
+    card.dataset.on = String(dev.on);
+    card.dataset.power = (dev.power || '—').replace(' W', '').replace('—', '-1');
+    card.dataset.current = (dev.current || '—').replace(' A', '').replace('—', '-1');
+    card.dataset.voltage = (dev.voltage || '—').replace(' V', '').replace('—', '-1');
+    card.dataset.energy = (dev.energy || '—').replace(' kWh', '').replace('—', '-1');
+
+    card.classList.toggle('offline', !dev.online);
+
+    const statusDiv = card.querySelector('.device-status');
+    statusDiv.innerHTML = '';
+
+    if (dev.online) {
+      statusDiv.appendChild(Object.assign(document.createElement('span'), {
+        className: 'badge online', textContent: '● online'
+      }));
+    } else {
+      statusDiv.appendChild(Object.assign(document.createElement('span'), {
+        className: 'badge offline', textContent: '✗ offline'
+      }));
+    }
+
+    if (dev.on === true) {
+      statusDiv.appendChild(Object.assign(document.createElement('span'), {
+        className: 'badge on', textContent: 'ON'
+      }));
+    } else if (dev.on === false) {
+      statusDiv.appendChild(Object.assign(document.createElement('span'), {
+        className: 'badge off', textContent: 'off'
+      }));
+    }
+
+    const metricValues = card.querySelectorAll('.metric-value');
+    const vals = [dev.power || '—', dev.current || '—', dev.voltage || '—', dev.energy || '—'];
+    metricValues.forEach((el, i) => {
+      el.textContent = vals[i];
+      el.classList.toggle('active', i === 0 && vals[i] !== '—');
+      el.classList.toggle('energy', i === 3);
+    });
+  }
+
+  async function loadStatuses() {
+    try {
+      const resp = await fetch('statuses');
+      const data = await resp.json();
+      if (!Array.isArray(data)) return;
+
+      data.forEach(dev => {
+        const card = cards.find(c => c.dataset.id === dev.id);
+        if (card) updateCard(card, dev);
+      });
+
+      applyFilters();
+      applySort();
+    } catch (e) {
+      // silently retry next poll
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -371,6 +426,8 @@
   readFiltersFromURL();
   applyFilters();
   applySort();
+  loadStatuses();
+  setInterval(loadStatuses, POLL_MS);
 })();
 </script>
 

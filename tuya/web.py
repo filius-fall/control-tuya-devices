@@ -358,18 +358,39 @@ flask_app = Flask(
 
 @flask_app.route("/")
 def index():
-    statuses = _poll_all()
-    online_count = sum(1 for s in statuses if s.get("online"))
-    rooms = sorted({s.get("room", "unknown") for s in statuses})
+    """Render the dashboard skeleton; actual device data is fetched via /statuses."""
+    if not _cloud_devices:
+        _cloud_devices[:] = _discover_devices()
+
+    devices = []
+    rooms = set()
+    for dev in _cloud_devices:
+        dev_id = dev.get("id", "")
+        room = _resolve_room(dev_id)
+        rooms.add(room)
+        devices.append(
+            {
+                "id": dev_id,
+                "name": dev.get("name", "unknown"),
+                "room": room,
+            }
+        )
+
     return render_template(
         "index.html",
-        devices=statuses,
-        rooms=rooms,
-        online_count=online_count,
-        total_count=len(statuses),
+        devices=devices,
+        rooms=sorted(rooms),
+        online_count=0,
+        total_count=len(devices),
         poll_interval=POLL_INTERVAL,
         discover_interval=DISCOVER_INTERVAL,
     )
+
+
+@flask_app.route("/statuses")
+def statuses_json():
+    """Return current device statuses as JSON for async dashboard updates."""
+    return jsonify(_poll_all())
 
 
 @flask_app.route("/refresh", methods=["POST"])

@@ -1,0 +1,77 @@
+---
+- name: Ensure tuya exporter group exists
+  ansible.builtin.group:
+    name: tuya
+    system: true
+    state: present
+
+- name: Ensure tuya exporter user exists
+  ansible.builtin.user:
+    name: tuya
+    group: tuya
+    system: true
+    shell: /usr/sbin/nologin
+    home: /opt/tuya-exporter
+    create_home: true
+    state: present
+
+- name: Install uv
+  ansible.builtin.pip:
+    name: uv
+    state: present
+
+- name: Clone tuya exporter repository
+  ansible.builtin.git:
+    repo: "{{ tuya_exporter_repo }}"
+    dest: /opt/tuya-exporter
+    version: "{{ tuya_exporter_branch | default('main') }}"
+    force: true
+  notify: Restart tuya exporter
+
+- name: Install tuya exporter dependencies
+  ansible.builtin.command:
+    cmd: uv sync --no-dev
+    chdir: /opt/tuya-exporter
+  become_user: tuya
+  changed_when: true
+
+- name: Install gunicorn
+  ansible.builtin.command:
+    cmd: uv pip install gunicorn
+    chdir: /opt/tuya-exporter
+  become_user: tuya
+  changed_when: true
+
+- name: Ensure .env file exists
+  ansible.builtin.template:
+    src: env.j2
+    dest: /opt/tuya-exporter/.env
+    owner: tuya
+    group: tuya
+    mode: "0600"
+  notify: Restart tuya exporter
+
+- name: Ensure switches.toml exists
+  ansible.builtin.template:
+    src: switches.toml.j2
+    dest: /opt/tuya-exporter/switches.toml
+    owner: tuya
+    group: tuya
+    mode: "0600"
+  notify: Restart tuya exporter
+
+- name: Install systemd service
+  ansible.builtin.template:
+    src: tuya-exporter.service.j2
+    dest: /etc/systemd/system/tuya-exporter.service
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart tuya exporter
+
+- name: Enable and start tuya exporter
+  ansible.builtin.systemd:
+    name: tuya-exporter
+    enabled: true
+    state: started
+    daemon_reload: true

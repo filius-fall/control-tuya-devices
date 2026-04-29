@@ -1,0 +1,14 @@
+services:
+  tuya-exporter:
+    build: .
+    container_name: tuya-exporter
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - TUYA_POLL_INTERVAL=30
+    volumes:
+      - ./switches.toml:/app/switches.toml:ro
+      - ./logs:/app/logs

@@ -3,7 +3,7 @@ import sys
 
 from rich.console import Console
 
-from tuya.main import run_once, run_loop
+from tuya.main import run_once
 from tuya.devices import save_example_config
 from tuya import setup as setup_module
 from tuya import textual_setup
@@ -45,13 +45,41 @@ def cmd_setup(args):
             content = setup_module.build_switches_toml(scan=args.scan)
             with open(path, "w") as f:
                 f.write(content)
-            console.print(
-                f"[green]Wrote {path}[/green] with all devices enabled."
-            )
+            console.print(f"[green]Wrote {path}[/green] with all devices enabled.")
         else:
             textual_setup.run_textual_setup(path=path, scan=args.scan)
     except Exception as exc:
         print_error(str(exc))
+        sys.exit(1)
+
+
+def cmd_metrics(args):
+    """Start the Prometheus metrics exporter (via gunicorn)."""
+    import subprocess
+
+    port = args.port
+    workers = args.workers
+    console.print(f"[green]Starting Tuya Prometheus exporter[/green] on port {port}...")
+    console.print(f"[dim]Poll interval: {args.interval}s  |  Workers: {workers}[/dim]")
+    console.print(f"[dim]Metrics endpoint: http://localhost:{port}/metrics[/dim]")
+    console.print("[dim]Press Ctrl+C to stop.[/dim]\n")
+
+    try:
+        subprocess.run(
+            [
+                "gunicorn",
+                "-w",
+                str(workers),
+                "-b",
+                f"0.0.0.0:{port}",
+                "tuya.metrics_exporter:app",
+            ],
+            check=True,
+        )
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Exporter stopped.[/yellow]")
+    except FileNotFoundError:
+        print_error("gunicorn not found. Run: uv pip install gunicorn")
         sys.exit(1)
 
 
@@ -115,13 +143,21 @@ def cli():
         help="Refresh interval in seconds (default: 2)",
     )
 
-    # loop
-    p_loop = sub.add_parser("loop", help="Continuous monitoring loop (JSONL output)")
-    p_loop.add_argument(
+    # metrics
+    p_metrics = sub.add_parser(
+        "metrics", help="Start Prometheus metrics exporter (gunicorn)"
+    )
+    p_metrics.add_argument(
+        "--port", type=int, default=8000, help="HTTP port (default: 8000)"
+    )
+    p_metrics.add_argument(
+        "--workers", type=int, default=1, help="Gunicorn workers (default: 1)"
+    )
+    p_metrics.add_argument(
         "--interval",
         type=int,
         default=30,
-        help="Polling interval in seconds (default: 30)",
+        help="Device poll interval in seconds (default: 30)",
     )
 
     # setup
@@ -159,8 +195,8 @@ def cli():
         cmd_status()
     elif args.command == "top":
         top_module.run_top(interval=args.interval)
-    elif args.command == "loop":
-        run_loop(interval_seconds=args.interval)
+    elif args.command == "metrics":
+        cmd_metrics(args)
     elif args.command == "setup":
         cmd_setup(args)
     elif args.command == "history":

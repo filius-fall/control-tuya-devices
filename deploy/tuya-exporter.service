@@ -1,0 +1,17 @@
+[Unit]
+Description=Tuya Prometheus Exporter
+After=network.target
+
+[Service]
+Type=simple
+User=tuya
+Group=tuya
+WorkingDirectory=/opt/tuya-exporter
+Environment="PATH=/opt/tuya-exporter/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=/opt/tuya-exporter/.env
+ExecStart=/opt/tuya-exporter/.venv/bin/gunicorn -w 1 -b 0.0.0.0:8000 tuya.metrics_exporter:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

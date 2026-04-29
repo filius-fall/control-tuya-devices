@@ -80,6 +80,7 @@ _device_rooms: dict[str, str] = {}
 _local_config: dict[str, dict] = {}
 _local_config_mtime: float = 0.0
 _energy_tracker = EnergyTracker()
+_last_statuses: dict[str, dict] = {}
 
 
 def _metric_labels(device_id: str) -> dict[str, str]:
@@ -124,9 +125,7 @@ class _ExporterStateCollector:
             if not device_id:
                 continue
             state = states.get(device_id)
-            energy_total.add_metric(
-                [device_id], state.total_joules if state else 0.0
-            )
+            energy_total.add_metric([device_id], state.total_joules if state else 0.0)
             energy_resets.add_metric(
                 [device_id], float(state.reset_count) if state else 0.0
             )
@@ -360,22 +359,20 @@ def _poll_all():
         _cloud_devices = _discover_devices()
         log.info("Discovered devices", count=len(_cloud_devices))
 
-    statuses = []
     for dev in _cloud_devices:
+        dev_id = dev.get("id", "")
         try:
-            statuses.append(_poll_device(dev))
+            status = _poll_device(dev)
         except Exception:
             log.error("Poll failed", device=dev.get("name"), exc_info=True)
-            statuses.append(
-                {
-                    "id": dev.get("id", ""),
-                    "name": dev.get("name", "unknown"),
-                    "room": _resolve_room(dev.get("id", "")),
-                    "online": False,
-                    "source": "—",
-                }
-            )
-    return statuses
+            status = {
+                "id": dev_id,
+                "name": dev.get("name", "unknown"),
+                "room": _resolve_room(dev_id),
+                "online": False,
+                "source": "—",
+            }
+        _last_statuses[dev_id] = status
 
 
 def _polling_loop():
@@ -414,9 +411,6 @@ flask_app = Flask(
 @flask_app.route("/")
 def index():
     """Render the dashboard skeleton; actual device data is fetched via /statuses."""
-    if not _cloud_devices:
-        _cloud_devices[:] = _discover_devices()
-
     devices = []
     rooms = set()
     for dev in _cloud_devices:
@@ -444,8 +438,21 @@ def index():
 
 @flask_app.route("/statuses")
 def statuses_json():
-    """Return current device statuses as JSON for async dashboard updates."""
-    return jsonify(_poll_all())
+    """Return cached device statuses as JSON for async dashboard updates.
+
+    This serves the last values polled by the background thread.
+    It does NOT block on fresh API calls.
+    """
+    return jsonify(list(_last_statuses.values()))
+
+
+@flask_app.route("/status/<device_id>")
+def status_single(device_id):
+    """Return cached status for a single device."""
+    status = _last_statuses.get(device_id)
+    if status:
+        return jsonify(status)
+    return jsonify({"error": "Device not found or not yet polled"}), 404
 
 
 @flask_app.route("/refresh", methods=["POST"])
@@ -527,10 +534,11 @@ def toggle_device(device_id):
 
 @flask_app.route("/poll/<device_id>")
 def poll_device(device_id):
-    for dev in _cloud_devices:
-        if dev.get("id") == device_id:
-            return jsonify(_poll_device(dev))
-    return jsonify({"error": "Device not found"}), 404
+    """Return cached status for a single device."""
+    status = _last_statuses.get(device_id)
+    if status:
+        return jsonify(status)
+    return jsonify({"error": "Device not found or not yet polled"}), 404
 
 
 @flask_app.route("/rooms")

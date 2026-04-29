@@ -303,6 +303,24 @@
 
       applyFilters();
       applySort();
+
+      // For any cards still loading, fetch individually so they populate
+      // independently without waiting for the next bulk poll.
+      const loadingCards = cards.filter(c => c.dataset.loading === 'true');
+      await Promise.all(
+        loadingCards.map(async (card) => {
+          try {
+            const r = await fetch('status/' + card.dataset.id);
+            if (!r.ok) return;
+            const dev = await r.json();
+            updateCard(card, dev);
+            applyFilters();
+            applySort();
+          } catch (e) {
+            // silently skip; will retry on next bulk poll
+          }
+        })
+      );
     } catch (e) {
       // silently retry next poll
     }

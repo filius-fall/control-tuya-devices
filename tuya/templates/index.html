@@ -32,7 +32,7 @@
       <button type="submit" class="btn-refresh">Rediscover</button>
     </form>
     <a href="{{ url_for('rooms_page') }}" class="btn-metrics">Rooms</a>
-    <a href="/metrics" class="btn-metrics">/metrics</a>
+    <a href="metrics" class="btn-metrics">metrics</a>
   </div>
 </header>
 
@@ -315,7 +315,7 @@
     if (!currentDeviceId) return;
     modalError.textContent = '';
     try {
-      const resp = await fetch(`/toggle/${currentDeviceId}`, {
+      const resp = await fetch(`toggle/${currentDeviceId}`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({state: state})

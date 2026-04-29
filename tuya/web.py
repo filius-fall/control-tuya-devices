@@ -13,8 +13,11 @@ Routes:
 import threading
 import time
 import os
+import json
+import io
+from datetime import datetime, timezone
 
-from flask import Flask, render_template, jsonify, redirect, url_for
+from flask import Flask, render_template, jsonify, redirect, url_for, request, send_file
 from prometheus_client import Gauge, Counter, make_wsgi_app
 from prometheus_client.registry import CollectorRegistry
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
@@ -23,6 +26,7 @@ from . import logger
 from . import api_client
 from . import local_client
 from . import devices as device_config
+from . import room_config
 from .rich_output import (
     _extract_power_dps,
     _fmt_power,
@@ -38,23 +42,36 @@ DISCOVER_INTERVAL = int(os.getenv("TUYA_DISCOVER_INTERVAL", "3600"))
 
 REGISTRY = CollectorRegistry()
 
-POWER = Gauge("tuya_power_watts", "Current power draw", ["device"], registry=REGISTRY)
-CURRENT = Gauge("tuya_current_amps", "Current current", ["device"], registry=REGISTRY)
-VOLTAGE = Gauge("tuya_voltage_volts", "Current voltage", ["device"], registry=REGISTRY)
+POWER = Gauge(
+    "tuya_power_watts", "Current power draw", ["device", "room"], registry=REGISTRY
+)
+CURRENT = Gauge(
+    "tuya_current_amps", "Current current", ["device", "room"], registry=REGISTRY
+)
+VOLTAGE = Gauge(
+    "tuya_voltage_volts", "Current voltage", ["device", "room"], registry=REGISTRY
+)
 ENERGY = Counter(
     "tuya_energy_kwh",
     "Cumulative energy consumption (resets at midnight)",
-    ["device"],
+    ["device", "room"],
     registry=REGISTRY,
 )
 ONLINE = Gauge(
-    "tuya_online", "Device is reachable (1=yes, 0=no)", ["device"], registry=REGISTRY
+    "tuya_online",
+    "Device is reachable (1=yes, 0=no)",
+    ["device", "room"],
+    registry=REGISTRY,
 )
 SWITCH = Gauge(
-    "tuya_switch_state", "Relay state (1=on, 0=off)", ["device"], registry=REGISTRY
+    "tuya_switch_state",
+    "Relay state (1=on, 0=off)",
+    ["device", "room"],
+    registry=REGISTRY,
 )
 
 _cloud_devices: list[dict] = []
+_device_rooms: dict[str, str] = {}
 _local_config: dict[str, dict] = {}
 _local_config_mtime: float = 0.0
 _prev_energy: dict[str, float] = {}
@@ -81,17 +98,30 @@ def _load_local_config() -> dict[str, dict]:
 
 
 def _discover_devices() -> list[dict]:
+    global _device_rooms
     try:
-        return api_client.get_devices()
+        devices = api_client.get_devices()
     except Exception:
         log.error("Device discovery failed", exc_info=True)
         return []
+    try:
+        _device_rooms = api_client.get_device_room_map()
+    except Exception:
+        log.error("Room mapping failed", exc_info=True)
+        _device_rooms = {}
+    return devices
+
+
+def _resolve_room(dev_id: str) -> str:
+    """Return the effective room for a device (override > API > unknown)."""
+    return room_config.resolve_room(dev_id, _device_rooms.get(dev_id))
 
 
 def _poll_device(dev: dict) -> dict:
     """Poll a single device and return a status dict."""
     dev_id = dev.get("id", "")
     name = dev.get("name", "unknown")
+    room = _resolve_room(dev_id)
     version = dev.get("version", "3.3")
     local_cfg = _local_config.get(dev_id, {})
     local_key = local_cfg.get("local_key")
@@ -99,7 +129,6 @@ def _poll_device(dev: dict) -> dict:
 
     dps = None
     source = "cloud"
-    online = False
 
     if local_key and ip:
         local_status = local_client.get_device_status_local(
@@ -108,12 +137,10 @@ def _poll_device(dev: dict) -> dict:
         if local_status and "dps" in local_status:
             dps = local_status["dps"]
             source = "local"
-            online = True
 
     if dps is None:
         cloud_status = api_client.get_device_status(dev_id)
         if cloud_status and isinstance(cloud_status, dict):
-            online = True
             result = cloud_status.get("result", [])
             if isinstance(result, list):
                 dps = {
@@ -127,51 +154,53 @@ def _poll_device(dev: dict) -> dict:
                 dps = {}
 
     if not dps:
-        ONLINE.labels(device=name).set(0)
+        ONLINE.labels(device=name, room=room).set(0)
         return {
             "id": dev_id,
             "name": name,
+            "room": room,
             "online": False,
             "source": "—",
         }
 
-    ONLINE.labels(device=name).set(1)
+    ONLINE.labels(device=name, room=room).set(1)
 
     raw_power = dps.get("cur_power") or dps.get("Power")
     if raw_power is not None:
         try:
-            POWER.labels(device=name).set(float(raw_power) / 10)
+            POWER.labels(device=name, room=room).set(float(raw_power) / 10)
         except (ValueError, TypeError):
             pass
 
     raw_current = dps.get("cur_current") or dps.get("Current")
     if raw_current is not None:
         try:
-            CURRENT.labels(device=name).set(float(raw_current) / 1000)
+            CURRENT.labels(device=name, room=room).set(float(raw_current) / 1000)
         except (ValueError, TypeError):
             pass
 
     raw_voltage = dps.get("cur_voltage") or dps.get("Voltage")
     if raw_voltage is not None:
         try:
-            VOLTAGE.labels(device=name).set(float(raw_voltage) / 10)
+            VOLTAGE.labels(device=name, room=room).set(float(raw_voltage) / 10)
         except (ValueError, TypeError):
             pass
 
     raw_energy = dps.get("add_ele") or dps.get("total_power")
-    _update_energy(name, raw_energy)
+    _update_energy(name, room, raw_energy)
 
     switch_state = dps.get("switch_1") or dps.get("switch") or dps.get("led_switch")
     if switch_state is True:
-        SWITCH.labels(device=name).set(1)
+        SWITCH.labels(device=name, room=room).set(1)
     elif switch_state is False:
-        SWITCH.labels(device=name).set(0)
+        SWITCH.labels(device=name, room=room).set(0)
 
     power_dps = _extract_power_dps(dps)
 
     return {
         "id": dev_id,
         "name": name,
+        "room": room,
         "online": True,
         "source": source,
         "on": switch_state is True,
@@ -182,7 +211,7 @@ def _poll_device(dev: dict) -> dict:
     }
 
 
-def _update_energy(device_name: str, raw: float | None) -> None:
+def _update_energy(device_name: str, room: str, raw: float | None) -> None:
     if raw is None:
         return
     try:
@@ -197,7 +226,7 @@ def _update_energy(device_name: str, raw: float | None) -> None:
 
     delta = current - prev if current >= prev else current
     if delta > 0:
-        ENERGY.labels(device=device_name).inc(delta)
+        ENERGY.labels(device=device_name, room=room).inc(delta)
         _prev_energy[device_name] = current
 
 
@@ -219,6 +248,7 @@ def _poll_all():
                 {
                     "id": dev.get("id", ""),
                     "name": dev.get("name", "unknown"),
+                    "room": _resolve_room(dev.get("id", "")),
                     "online": False,
                     "source": "—",
                 }
@@ -260,9 +290,11 @@ flask_app = Flask(
 def index():
     statuses = _poll_all()
     online_count = sum(1 for s in statuses if s.get("online"))
+    rooms = sorted({s.get("room", "unknown") for s in statuses})
     return render_template(
         "index.html",
         devices=statuses,
+        rooms=rooms,
         online_count=online_count,
         total_count=len(statuses),
         poll_interval=POLL_INTERVAL,
@@ -278,12 +310,145 @@ def refresh():
     return redirect(url_for("index"))
 
 
+def _get_switch_code(device_id: str) -> str | None:
+    """Determine which switch DP code a device responds to."""
+    status = api_client.get_device_status(device_id)
+    if not status or not isinstance(status, dict):
+        return None
+    result = status.get("result", [])
+    codes: dict[str, any] = {}
+    if isinstance(result, list):
+        for item in result:
+            if isinstance(item, dict) and "code" in item:
+                codes[item["code"]] = item.get("value")
+    elif isinstance(result, dict):
+        codes = result
+    for code in ("switch_1", "switch", "led_switch"):
+        if code in codes:
+            return code
+    return None
+
+
+@flask_app.route("/toggle/<device_id>", methods=["POST"])
+def toggle_device(device_id):
+    """Toggle a device on or off."""
+    payload = request.get_json(force=True, silent=True) or {}
+    state = payload.get("state")
+    if state is None:
+        return jsonify({"error": "Missing state"}), 400
+
+    switch_code = _get_switch_code(device_id)
+    if not switch_code:
+        return jsonify({"error": "Could not determine switch code"}), 400
+
+    try:
+        api_client.send_device_command(
+            device_id, [{"code": switch_code, "value": bool(state)}]
+        )
+        log.info("Toggled device", device_id=device_id, state=bool(state))
+        return jsonify({"success": True, "state": bool(state)})
+    except Exception:
+        log.error("Toggle failed", device_id=device_id, exc_info=True)
+        return jsonify({"error": "Toggle failed"}), 500
+
+
 @flask_app.route("/poll/<device_id>")
 def poll_device(device_id):
     for dev in _cloud_devices:
         if dev.get("id") == device_id:
             return jsonify(_poll_device(dev))
     return jsonify({"error": "Device not found"}), 404
+
+
+@flask_app.route("/rooms")
+def rooms_page():
+    """Room assignment management page."""
+    devices_with_rooms = []
+    for dev in _cloud_devices:
+        dev_id = dev.get("id", "")
+        devices_with_rooms.append(
+            {
+                "id": dev_id,
+                "name": dev.get("name", "unknown"),
+                "room": _resolve_room(dev_id),
+            }
+        )
+    all_rooms = sorted(
+        {d["room"] for d in devices_with_rooms if d["room"] != "unknown"}
+        | set(room_config.get_overrides().values())
+    )
+    return render_template(
+        "rooms.html",
+        devices=devices_with_rooms,
+        rooms=all_rooms,
+    )
+
+
+@flask_app.route("/rooms/assign", methods=["POST"])
+def assign_rooms():
+    """Bulk-assign selected devices to a room."""
+    device_ids = request.form.getlist("device_ids")
+    room_name = request.form.get("room_name", "").strip()
+
+    if device_ids and room_name:
+        mapping = {dev_id: room_name for dev_id in device_ids}
+        room_config.set_rooms(mapping)
+        log.info("Assigned devices to room", room=room_name, count=len(device_ids))
+
+    return redirect(url_for("rooms_page"))
+
+
+@flask_app.route("/rooms/clear", methods=["POST"])
+def clear_room():
+    """Remove the room override for a single device."""
+    device_id = request.form.get("device_id", "").strip()
+    if device_id:
+        room_config.delete_room(device_id)
+        log.info("Cleared room override", device_id=device_id)
+
+    return redirect(url_for("rooms_page"))
+
+
+@flask_app.route("/rooms/download")
+def download_rooms():
+    """Download room overrides as JSON."""
+    mapping = room_config.get_overrides()
+    data = json.dumps(mapping, indent=2, sort_keys=True)
+    buf = io.BytesIO(data.encode("utf-8"))
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return send_file(
+        buf,
+        mimetype="application/json",
+        as_attachment=True,
+        download_name=f"tuya-rooms-{ts}.json",
+    )
+
+
+@flask_app.route("/rooms/upload", methods=["POST"])
+def upload_rooms():
+    """Upload room overrides from JSON."""
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"error": "No file provided"}), 400
+
+    try:
+        data = json.load(file)
+    except json.JSONDecodeError as e:
+        return jsonify({"error": f"Invalid JSON: {e}"}), 400
+
+    if not isinstance(data, dict):
+        return jsonify(
+            {"error": "JSON must be an object mapping device_id to room_name"}
+        ), 400
+
+    # Filter to string values only
+    mapping = {
+        str(k): str(v) for k, v in data.items() if isinstance(v, (str, int, float))
+    }
+
+    room_config.set_rooms(mapping)
+    log.info("Uploaded room overrides", count=len(mapping))
+    return redirect(url_for("rooms_page"))
 
 
 # Mount Prometheus metrics at /metrics

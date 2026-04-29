@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manage Rooms — Tuya Control Panel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<style>
+.rooms-page { max-width: 900px; margin: 0 auto; padding: 32px; }
+.rooms-page h1 { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 24px; margin-bottom: 8px; }
+.rooms-page .subtitle { color: var(--text-muted); font-size: 13px; margin-bottom: 24px; }
+.rooms-toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 20px; padding: 16px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 10px; }
+.rooms-toolbar input[type="text"] { font-family: 'JetBrains Mono', monospace; font-size: 13px; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); min-width: 200px; }
+.rooms-toolbar button { font-family: 'JetBrains Mono', monospace; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text-muted); cursor: pointer; transition: all 0.2s ease; }
+.rooms-toolbar button.primary { background: var(--cyan); color: var(--bg); border-color: var(--cyan); font-weight: 700; }
+.rooms-toolbar button:hover { border-color: var(--cyan); color: var(--cyan); }
+.rooms-toolbar button.primary:hover { background: #0891b2; border-color: #0891b2; color: var(--bg); }
+.rooms-toolbar .btn-download { font-family: 'JetBrains Mono', monospace; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text-muted); text-decoration: none; transition: all 0.2s ease; }
+.rooms-toolbar .btn-download:hover { border-color: var(--cyan); color: var(--cyan); }
+.rooms-toolbar .upload-form input[type="file"] { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-muted); cursor: pointer; }
+.rooms-toolbar .upload-form input[type="file"]::file-selector-button { font-family: 'JetBrains Mono', monospace; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text-muted); cursor: pointer; transition: all 0.2s ease; }
+.rooms-toolbar .upload-form input[type="file"]::file-selector-button:hover { border-color: var(--cyan); color: var(--cyan); }
+.rooms-table { width: 100%; border-collapse: collapse; }
+.rooms-table th, .rooms-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border-subtle); font-size: 13px; }
+.rooms-table th { color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-size: 11px; font-weight: 700; }
+.rooms-table tr:hover { background: var(--bg-card); }
+.rooms-table td:first-child { width: 40px; }
+.rooms-table input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--cyan); cursor: pointer; }
+.rooms-table .room-tag { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; background: rgba(139, 92, 246, 0.12); color: #a78bfa; }
+.rooms-table .room-tag.unknown { background: rgba(122, 115, 153, 0.12); color: var(--text-dim); }
+.rooms-table form { display: inline; }
+.rooms-table .btn-clear { font-size: 11px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--text-dim); cursor: pointer; }
+.rooms-table .btn-clear:hover { color: var(--red); border-color: var(--red); }
+.back-link { display: inline-block; margin-bottom: 20px; color: var(--text-muted); text-decoration: none; font-size: 13px; }
+.back-link:hover { color: var(--cyan); }
+</style>
+</head>
+<body>
+
+<div class="rooms-page">
+  <a href="{{ url_for('index') }}" class="back-link">← Back to dashboard</a>
+  <h1>Manage Rooms</h1>
+  <p class="subtitle">Select devices and assign them to a room. Overrides take precedence over cloud-discovered rooms.</p>
+
+  <div class="rooms-toolbar">
+    <a href="{{ url_for('download_rooms') }}" class="btn-download">Download</a>
+    <form method="post" action="{{ url_for('upload_rooms') }}" enctype="multipart/form-data" class="upload-form">
+      <input type="file" name="file" accept=".json" required onchange="this.form.submit()">
+    </form>
+  </div>
+
+  <form method="post" action="{{ url_for('assign_rooms') }}">
+    <div class="rooms-toolbar">
+      <input type="text" name="room_name" placeholder="Room name..." required list="room-suggestions">
+      <datalist id="room-suggestions">
+        {% for room in rooms %}
+        <option value="{{ room }}">
+        {% endfor %}
+      </datalist>
+      <button type="submit" class="primary">Assign to Room</button>
+    </div>
+
+    <table class="rooms-table">
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="select-all" title="Select all"></th>
+          <th>Device</th>
+          <th>Current Room</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for dev in devices %}
+        <tr>
+          <td><input type="checkbox" name="device_ids" value="{{ dev.id }}"></td>
+          <td>{{ dev.name }}</td>
+          <td>
+            {% if dev.room != 'unknown' %}
+              <span class="room-tag">{{ dev.room }}</span>
+            {% else %}
+              <span class="room-tag unknown">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if dev.room != 'unknown' %}
+            <form method="post" action="{{ url_for('clear_room') }}">
+              <input type="hidden" name="device_id" value="{{ dev.id }}">
+              <button type="submit" class="btn-clear" title="Remove override">clear</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </form>
+</div>
+
+<script>
+document.getElementById('select-all').addEventListener('change', function() {
+  document.querySelectorAll('input[name="device_ids"]').forEach(cb => {
+    cb.checked = this.checked;
+  });
+});
+</script>
+
+</body>
+</html>

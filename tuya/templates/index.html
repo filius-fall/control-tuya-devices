@@ -23,6 +23,7 @@
     <form method="post" action="{{ url_for('refresh') }}" class="refresh-form">
       <button type="submit" class="btn-refresh">Rediscover</button>
     </form>
+    <a href="{{ url_for('rooms_page') }}" class="btn-metrics">Rooms</a>
     <a href="/metrics" class="btn-metrics">/metrics</a>
   </div>
 </header>
@@ -30,6 +31,14 @@
 <section class="filters">
   <div class="filter-group">
     <input type="text" id="search" placeholder="Filter by name..." class="filter-input">
+  </div>
+  <div class="filter-group">
+    <select id="room-filter" class="filter-select">
+      <option value="all">All rooms</option>
+      {% for room in rooms %}
+      <option value="{{ room }}">{{ room }}</option>
+      {% endfor %}
+    </select>
   </div>
   <div class="filter-group toggles">
     <button class="toggle-btn active" data-filter="all">All</button>
@@ -42,6 +51,7 @@
     <label for="sort">Sort</label>
     <select id="sort" class="filter-select">
       <option value="name">Name</option>
+      <option value="room">Room</option>
       <option value="power">Power</option>
       <option value="current">Current</option>
       <option value="voltage">Voltage</option>
@@ -55,7 +65,9 @@
   {% for dev in devices %}
   <article
     class="device-card {% if not dev.online %}offline{% endif %}"
+    data-id="{{ dev.id }}"
     data-name="{{ dev.name | lower }}"
+    data-room="{{ dev.room | lower }}"
     data-online="{{ 'true' if dev.online else 'false' }}"
     data-on="{{ 'true' if dev.on else 'false' }}"
     data-power="{{ dev.power | replace(' W', '') | replace('—', '-1') }}"
@@ -64,7 +76,10 @@
     data-energy="{{ dev.energy | replace(' kWh', '') | replace('—', '-1') }}"
   >
     <div class="card-header">
-      <h2 class="device-name">{{ dev.name }}</h2>
+      <div class="card-title">
+        <h2 class="device-name">{{ dev.name }}</h2>
+        <span class="room-name">{{ dev.room }}</span>
+      </div>
       <div class="device-status">
         {% if dev.online %}
           <span class="badge online">● online</span>
@@ -97,10 +112,6 @@
         <span class="metric-value energy">{{ dev.energy }}</span>
       </div>
     </div>
-
-    <div class="card-footer">
-      <span class="source">{{ dev.source }}</span>
-    </div>
   </article>
   {% endfor %}
 </main>
@@ -109,11 +120,25 @@
   <p>Poll interval: <strong>{{ poll_interval }}s</strong> · Re-discovery: <strong>{% if discover_interval > 0 %}{{ discover_interval }}s{% else %}disabled{% endif %}</strong></p>
 </footer>
 
+<div id="toggle-modal" class="modal">
+  <div class="modal-content">
+    <h2 id="modal-device-name"></h2>
+    <p class="modal-state" id="modal-current-state"></p>
+    <div class="modal-actions">
+      <button id="modal-turn-on" class="modal-btn on">Turn On</button>
+      <button id="modal-turn-off" class="modal-btn off">Turn Off</button>
+      <button id="modal-cancel" class="modal-btn cancel">Cancel</button>
+    </div>
+    <p id="modal-error" class="modal-error"></p>
+  </div>
+</div>
+
 <script>
 (function() {
   const dashboard = document.getElementById('dashboard');
   const cards = Array.from(dashboard.querySelectorAll('.device-card'));
   const searchInput = document.getElementById('search');
+  const roomFilter = document.getElementById('room-filter');
   const toggleBtns = document.querySelectorAll('.toggle-btn');
   const sortSelect = document.getElementById('sort');
   const sortDirBtn = document.getElementById('sort-dir');
@@ -124,9 +149,11 @@
 
   function applyFilters() {
     const query = searchInput.value.trim().toLowerCase();
+    const roomQuery = roomFilter.value;
 
     cards.forEach(card => {
       const name = card.dataset.name;
+      const room = card.dataset.room;
       const online = card.dataset.online === 'true';
       const on = card.dataset.on === 'true';
 
@@ -134,6 +161,11 @@
 
       // Name search
       if (query && !name.includes(query)) {
+        visible = false;
+      }
+
+      // Room filter
+      if (roomQuery !== 'all' && room !== roomQuery) {
         visible = false;
       }
 
@@ -185,6 +217,12 @@
     applySort();
   });
 
+  // Room filter
+  roomFilter.addEventListener('change', () => {
+    applyFilters();
+    applySort();
+  });
+
   // Toggles
   toggleBtns.forEach(btn => {
     btn.addEventListener('click', () => {
@@ -211,6 +249,63 @@
 
   // Initial sort
   applySort();
+
+  // Toggle modal
+  const modal = document.getElementById('toggle-modal');
+  const modalName = document.getElementById('modal-device-name');
+  const modalState = document.getElementById('modal-current-state');
+  const modalError = document.getElementById('modal-error');
+  const btnOn = document.getElementById('modal-turn-on');
+  const btnOff = document.getElementById('modal-turn-off');
+  const btnCancel = document.getElementById('modal-cancel');
+  let currentDeviceId = null;
+
+  function openModal(card) {
+    if (card.dataset.online !== 'true') return;
+    currentDeviceId = card.dataset.id;
+    modalName.textContent = card.querySelector('.device-name').textContent;
+    modalState.textContent = card.dataset.on === 'true' ? 'Currently ON' : 'Currently off';
+    modalError.textContent = '';
+    modal.classList.add('active');
+  }
+
+  function closeModal() {
+    modal.classList.remove('active');
+    currentDeviceId = null;
+  }
+
+  async function doToggle(state) {
+    if (!currentDeviceId) return;
+    modalError.textContent = '';
+    try {
+      const resp = await fetch(`/toggle/${currentDeviceId}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({state: state})
+      });
+      const data = await resp.json();
+      if (data.success) {
+        closeModal();
+        // Refresh the page to show updated state
+        window.location.reload();
+      } else {
+        modalError.textContent = data.error || 'Toggle failed';
+      }
+    } catch (e) {
+      modalError.textContent = 'Network error';
+    }
+  }
+
+  cards.forEach(card => {
+    card.addEventListener('click', () => openModal(card));
+  });
+
+  btnOn.addEventListener('click', () => doToggle(true));
+  btnOff.addEventListener('click', () => doToggle(false));
+  btnCancel.addEventListener('click', closeModal);
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+  });
 })();
 </script>
 

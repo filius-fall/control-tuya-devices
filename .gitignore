@@ -19,6 +19,7 @@ logs/
 
 # User config
 switches.toml
+rooms.db
 
 # Lock files
 *.lock

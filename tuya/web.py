@@ -251,6 +251,12 @@ def _poll_device(dev: dict) -> dict:
             pass
 
     raw_energy = _extract_power_dps(dps).get("energy")
+    log.debug(
+        "_poll_device energy",
+        device=name,
+        raw_energy=raw_energy,
+        dps_keys=list(dps.keys()),
+    )
     _update_energy(name, room, raw_energy)
 
     # Use key-in-dict check so a literal False value is not skipped by `or`.
@@ -283,10 +289,12 @@ def _poll_device(dev: dict) -> dict:
 
 def _update_energy(device_name: str, room: str, raw: float | None) -> None:
     if raw is None:
+        log.debug("_update_energy: raw is None", device=device_name)
         return
     try:
         current = float(raw) / 10
     except (ValueError, TypeError):
+        log.debug("_update_energy: bad raw value", device=device_name, raw=raw)
         return
 
     prev = _prev_energy.get(device_name)
@@ -294,12 +302,21 @@ def _update_energy(device_name: str, room: str, raw: float | None) -> None:
         _prev_energy[device_name] = current
         # Initialize the counter so it appears in /metrics immediately.
         ENERGY.labels(device=device_name, room=room).inc(0)
+        log.debug("_update_energy: baseline set", device=device_name, current=current)
         return
 
     delta = current - prev if current >= prev else current
+    log.debug(
+        "_update_energy: delta check",
+        device=device_name,
+        prev=prev,
+        current=current,
+        delta=delta,
+    )
     if delta > 0:
         ENERGY.labels(device=device_name, room=room).inc(delta)
         _prev_energy[device_name] = current
+        log.debug("_update_energy: incremented", device=device_name, delta=delta)
 
 
 def _poll_all():

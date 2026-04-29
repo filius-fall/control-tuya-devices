@@ -380,23 +380,57 @@ def refresh():
     return redirect(url_for("index"))
 
 
-def _get_switch_code(device_id: str) -> str | None:
-    """Determine which switch DP code a device responds to."""
+def _get_switch_codes(device_id: str) -> list[str]:
+    """Return all switch DP codes a device exposes, ordered by preference."""
     status = api_client.get_device_status(device_id)
     if not status or not isinstance(status, dict):
-        return None
+        return []
     result = status.get("result", [])
-    codes: dict[str, any] = {}
+    codes: set[str] = set()
     if isinstance(result, list):
         for item in result:
             if isinstance(item, dict) and "code" in item:
-                codes[item["code"]] = item.get("value")
+                codes.add(item["code"])
     elif isinstance(result, dict):
-        codes = result
+        if isinstance(result.get("status"), list):
+            for item in result["status"]:
+                if isinstance(item, dict) and "code" in item:
+                    codes.add(item["code"])
+        else:
+            codes.update(result.keys())
+    ordered = []
     for code in ("switch_1", "switch", "led_switch"):
         if code in codes:
-            return code
-    return None
+            ordered.append(code)
+    return ordered
+
+
+def _try_toggle(device_id: str, state: bool) -> None:
+    """Send a toggle command, trying fallback switch codes on failure."""
+    codes = _get_switch_codes(device_id)
+    if not codes:
+        raise RuntimeError("No switch codes found for device")
+
+    last_error = None
+    for code in codes:
+        try:
+            api_client.send_device_command(
+                device_id, [{"code": code, "value": bool(state)}]
+            )
+            log.info(
+                "Toggled device", device_id=device_id, state=bool(state), code=code
+            )
+            return
+        except Exception as exc:
+            last_error = exc
+            log.warning(
+                "Toggle attempt failed",
+                device_id=device_id,
+                code=code,
+                error=str(exc),
+            )
+
+    raise last_error or RuntimeError("All toggle attempts failed")
 
 
 @flask_app.route("/toggle/<device_id>", methods=["POST"])
@@ -407,15 +441,8 @@ def toggle_device(device_id):
     if state is None:
         return jsonify({"error": "Missing state"}), 400
 
-    switch_code = _get_switch_code(device_id)
-    if not switch_code:
-        return jsonify({"error": "Could not determine switch code"}), 400
-
     try:
-        api_client.send_device_command(
-            device_id, [{"code": switch_code, "value": bool(state)}]
-        )
-        log.info("Toggled device", device_id=device_id, state=bool(state))
+        _try_toggle(device_id, bool(state))
         return jsonify({"success": True, "state": bool(state)})
     except Exception:
         log.error("Toggle failed", device_id=device_id, exc_info=True)

@@ -114,10 +114,15 @@ def send_device_command(device_id: str, commands: list[dict]) -> dict:
         [{"code": "switch_1", "value": True}]
     """
     client = create_tuya_client()
-    result = client.sendcommand(deviceid=device_id, commands=commands)
+    payload = {"commands": commands}
+    result = client.sendcommand(deviceid=device_id, commands=payload)
     if isinstance(result, dict) and "Error" in result:
         raise RuntimeError(f"Command failed: {result}")
-    log.info("Sent command to device", device_id=device_id, commands=commands)
+    if isinstance(result, dict) and not result.get("success", True):
+        raise RuntimeError(f"Command failed: {result}")
+    log.info(
+        "Sent command to device", device_id=device_id, commands=commands, result=result
+    )
     return result
 
 

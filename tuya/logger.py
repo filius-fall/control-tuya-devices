@@ -7,24 +7,34 @@ logger = logging.getLogger("tuya")
 logger.setLevel(logging.INFO)
 logger.propagate = False
 
-os.makedirs("logs", exist_ok=True)
+# Allow forcing file logging via env var; default to stdout for systemd.
+_LOG_TO_FILE = os.getenv("TUYA_LOG_FILE", "").lower() in ("1", "true", "yes")
+_LOG_FORMAT = os.getenv("TUYA_LOG_FORMAT", "json").lower()
 
 if not logger.handlers:
-    file_handler = logging.FileHandler("logs/app.log")
-    file_handler.setLevel(logging.INFO)
+    if _LOG_TO_FILE:
+        os.makedirs("logs", exist_ok=True)
+        handler = logging.FileHandler("logs/app.log")
+    else:
+        handler = logging.StreamHandler(sys.stdout)
 
-    formatter = logging.Formatter("%(message)s")
-    file_handler.setFormatter(formatter)
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
 
-    logger.addHandler(file_handler)
+_processors = [
+    structlog.processors.StackInfoRenderer(),
+    structlog.processors.format_exc_info,
+    structlog.processors.TimeStamper(fmt="iso"),
+]
+
+if _LOG_FORMAT == "console":
+    _processors.append(structlog.dev.ConsoleRenderer(colors=sys.stderr.isatty()))
+else:
+    _processors.append(structlog.processors.JSONRenderer())
 
 structlog.configure(
-    processors=[
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.JSONRenderer(),
-    ],
+    processors=_processors,
     context_class=dict,
     logger_factory=structlog.stdlib.LoggerFactory(),
     wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),

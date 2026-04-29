@@ -288,9 +288,9 @@
       });
       const data = await resp.json();
       if (data.success) {
-        closeModal();
         // Update the card locally for immediate feedback
         const card = cards.find(c => c.dataset.id === currentDeviceId);
+        closeModal();
         if (card) {
           card.dataset.on = String(state);
           const statusDiv = card.querySelector('.device-status');

@@ -359,7 +359,10 @@
   // PWA service worker
   // -------------------------------------------------------------------------
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('{{ url_for("static", filename="sw.js") }}');
+    navigator.serviceWorker.register(
+      '{{ url_for("static", filename="sw.js") }}',
+      { scope: '.' }
+    );
   }
 
   // -------------------------------------------------------------------------

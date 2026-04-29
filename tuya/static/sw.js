@@ -1,8 +1,9 @@
 const CACHE_NAME = 'tuya-v1';
+const prefix = self.location.pathname.replace(/\/static\/sw\.js$/, '');
 const ASSETS = [
-  '/',
-  '/static/style.css',
-  '/static/icon.svg',
+  prefix + '/',
+  prefix + '/static/style.css',
+  prefix + '/static/icon.svg',
 ];
 
 self.addEventListener('install', (event) => {

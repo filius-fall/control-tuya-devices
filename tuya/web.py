@@ -250,7 +250,7 @@ def _poll_device(dev: dict) -> dict:
         except (ValueError, TypeError):
             pass
 
-    raw_energy = dps.get("add_ele") or dps.get("total_power")
+    raw_energy = _extract_power_dps(dps).get("energy")
     _update_energy(name, room, raw_energy)
 
     # Use key-in-dict check so a literal False value is not skipped by `or`.
@@ -292,6 +292,8 @@ def _update_energy(device_name: str, room: str, raw: float | None) -> None:
     prev = _prev_energy.get(device_name)
     if prev is None:
         _prev_energy[device_name] = current
+        # Initialize the counter so it appears in /metrics immediately.
+        ENERGY.labels(device=device_name, room=room).inc(0)
         return
 
     delta = current - prev if current >= prev else current

@@ -26,7 +26,8 @@ from . import devices as device_config
 log = logger.logs
 
 POLL_INTERVAL = int(os.getenv("TUYA_POLL_INTERVAL", "30"))
-DISCOVER_INTERVAL = int(os.getenv("TUYA_DISCOVER_INTERVAL", "300"))  # 5 minutes
+# Device discovery interval. Set to 0 to disable periodic re-discovery.
+DISCOVER_INTERVAL = int(os.getenv("TUYA_DISCOVER_INTERVAL", "3600"))  # 1 hour
 
 REGISTRY = CollectorRegistry()
 
@@ -248,7 +249,7 @@ def _polling_loop():
     while True:
         try:
             now = time.time()
-            if now - last_discover >= DISCOVER_INTERVAL:
+            if DISCOVER_INTERVAL > 0 and now - last_discover >= DISCOVER_INTERVAL:
                 _cloud_devices = _discover_devices()
                 log.info("Refreshed device list", count=len(_cloud_devices))
                 last_discover = now

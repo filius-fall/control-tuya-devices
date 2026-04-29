@@ -10,7 +10,9 @@ services:
     environment:
       - TUYA_POLL_INTERVAL=30
       - TUYA_DISCOVER_INTERVAL=3600
+      - TUYA_DB_PATH=/app/data/tuya.db
     volumes:
       # Optional: mount switches.toml only if you want local polling
       # - ./switches.toml:/app/switches.toml:ro
+      - ./data:/app/data
       - ./logs:/app/logs

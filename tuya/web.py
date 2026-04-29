@@ -28,6 +28,7 @@ from flask import (
     Response,
 )
 from prometheus_client import Gauge, make_wsgi_app
+from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 from prometheus_client.registry import CollectorRegistry
 
 from . import logger
@@ -35,6 +36,7 @@ from . import api_client
 from . import local_client
 from . import devices as device_config
 from . import room_config
+from .energy_tracker import EnergyTracker
 from .rich_output import (
     _extract_power_dps,
     _fmt_power,
@@ -49,32 +51,27 @@ POLL_INTERVAL = int(os.getenv("TUYA_POLL_INTERVAL", "30"))
 DISCOVER_INTERVAL = int(os.getenv("TUYA_DISCOVER_INTERVAL", "3600"))
 
 REGISTRY = CollectorRegistry()
+METRIC_LABELS = ["device_id"]
 
 POWER = Gauge(
-    "tuya_power_watts", "Current power draw", ["device", "room"], registry=REGISTRY
+    "tuya_power_watts", "Current power draw", METRIC_LABELS, registry=REGISTRY
 )
 CURRENT = Gauge(
-    "tuya_current_amps", "Current current", ["device", "room"], registry=REGISTRY
+    "tuya_current_amps", "Current current", METRIC_LABELS, registry=REGISTRY
 )
 VOLTAGE = Gauge(
-    "tuya_voltage_volts", "Current voltage", ["device", "room"], registry=REGISTRY
-)
-ENERGY = Gauge(
-    "tuya_energy_kwh",
-    "Cumulative energy consumption (resets at midnight)",
-    ["device", "room"],
-    registry=REGISTRY,
+    "tuya_voltage_volts", "Current voltage", METRIC_LABELS, registry=REGISTRY
 )
 ONLINE = Gauge(
     "tuya_online",
     "Device is reachable (1=yes, 0=no)",
-    ["device", "room"],
+    METRIC_LABELS,
     registry=REGISTRY,
 )
 SWITCH = Gauge(
     "tuya_switch_state",
     "Relay state (1=on, 0=off)",
-    ["device", "room"],
+    METRIC_LABELS,
     registry=REGISTRY,
 )
 
@@ -82,6 +79,67 @@ _cloud_devices: list[dict] = []
 _device_rooms: dict[str, str] = {}
 _local_config: dict[str, dict] = {}
 _local_config_mtime: float = 0.0
+_energy_tracker = EnergyTracker()
+
+
+def _metric_labels(device_id: str) -> dict[str, str]:
+    return {"device_id": device_id}
+
+
+class _ExporterStateCollector:
+    def collect(self):
+        device_info = GaugeMetricFamily(
+            "tuya_device_info",
+            "Device metadata for joining stable device_id metrics to human-readable labels",
+            labels=["device_id", "device", "room"],
+        )
+        energy_today = GaugeMetricFamily(
+            "tuya_energy_kwh",
+            "Device-reported cumulative energy for the current day (resets at midnight)",
+            labels=METRIC_LABELS,
+        )
+        energy_total = CounterMetricFamily(
+            "tuya_energy_joules_total",
+            "Exporter-maintained total energy consumption synthesized from the device daily meter",
+            labels=METRIC_LABELS,
+        )
+        energy_resets = CounterMetricFamily(
+            "tuya_energy_resets_total",
+            "Number of device energy counter resets detected by the exporter",
+            labels=METRIC_LABELS,
+        )
+
+        devices = _cloud_devices[:]
+        states = _energy_tracker.snapshot()
+
+        for dev in devices:
+            dev_id = dev.get("id", "")
+            if not dev_id:
+                continue
+            device_info.add_metric(
+                [dev_id, dev.get("name", "unknown"), _resolve_room(dev_id)], 1
+            )
+
+        for device_id in sorted(set(states) | {dev.get("id", "") for dev in devices}):
+            if not device_id:
+                continue
+            state = states.get(device_id)
+            energy_total.add_metric(
+                [device_id], state.total_joules if state else 0.0
+            )
+            energy_resets.add_metric(
+                [device_id], float(state.reset_count) if state else 0.0
+            )
+            if state and state.last_raw_kwh is not None:
+                energy_today.add_metric([device_id], state.last_raw_kwh)
+
+        yield device_info
+        yield energy_today
+        yield energy_total
+        yield energy_resets
+
+
+REGISTRY.register(_ExporterStateCollector())
 _prometheus_app = make_wsgi_app(registry=REGISTRY)
 
 
@@ -161,12 +219,13 @@ def _extract_dps_from_status(status: dict | None) -> dict | None:
     return None
 
 
-def _mark_device_offline(name: str, room: str) -> None:
-    """Set all gauges to offline state and clear stale metric values."""
-    ONLINE.labels(device=name, room=room).set(0)
-    POWER.labels(device=name, room=room).set(0)
-    CURRENT.labels(device=name, room=room).set(0)
-    VOLTAGE.labels(device=name, room=room).set(0)
+def _mark_device_offline(device_id: str) -> None:
+    """Set online state to offline and clear live gauges to unknown."""
+    ONLINE.labels(**_metric_labels(device_id)).set(0)
+    POWER.labels(**_metric_labels(device_id)).set(float("nan"))
+    CURRENT.labels(**_metric_labels(device_id)).set(float("nan"))
+    VOLTAGE.labels(**_metric_labels(device_id)).set(float("nan"))
+    SWITCH.labels(**_metric_labels(device_id)).set(float("nan"))
 
 
 def _poll_device(dev: dict) -> dict:
@@ -182,7 +241,7 @@ def _poll_device(dev: dict) -> dict:
     # Use the online flag from the discovery list if the cloud already knows
     # the device is offline.
     if dev.get("online") is False:
-        _mark_device_offline(name, room)
+        _mark_device_offline(dev_id)
         return {
             "id": dev_id,
             "name": name,
@@ -217,7 +276,7 @@ def _poll_device(dev: dict) -> dict:
         dps = None
 
     if not dps:
-        _mark_device_offline(name, room)
+        _mark_device_offline(dev_id)
         return {
             "id": dev_id,
             "name": name,
@@ -226,31 +285,31 @@ def _poll_device(dev: dict) -> dict:
             "source": "—",
         }
 
-    ONLINE.labels(device=name, room=room).set(1)
+    ONLINE.labels(**_metric_labels(dev_id)).set(1)
 
     raw_power = dps.get("cur_power") or dps.get("Power")
     if raw_power is not None:
         try:
-            POWER.labels(device=name, room=room).set(float(raw_power) / 10)
+            POWER.labels(**_metric_labels(dev_id)).set(float(raw_power) / 10)
         except (ValueError, TypeError):
             pass
 
     raw_current = dps.get("cur_current") or dps.get("Current")
     if raw_current is not None:
         try:
-            CURRENT.labels(device=name, room=room).set(float(raw_current) / 1000)
+            CURRENT.labels(**_metric_labels(dev_id)).set(float(raw_current) / 1000)
         except (ValueError, TypeError):
             pass
 
     raw_voltage = dps.get("cur_voltage") or dps.get("Voltage")
     if raw_voltage is not None:
         try:
-            VOLTAGE.labels(device=name, room=room).set(float(raw_voltage) / 10)
+            VOLTAGE.labels(**_metric_labels(dev_id)).set(float(raw_voltage) / 10)
         except (ValueError, TypeError):
             pass
 
     raw_energy = _extract_power_dps(dps).get("energy")
-    _update_energy(name, room, raw_energy)
+    _update_energy(dev_id, raw_energy)
 
     # Use key-in-dict check so a literal False value is not skipped by `or`.
     switch_state: bool | None = None
@@ -260,9 +319,9 @@ def _poll_device(dev: dict) -> dict:
             break
 
     if switch_state is True:
-        SWITCH.labels(device=name, room=room).set(1)
+        SWITCH.labels(**_metric_labels(dev_id)).set(1)
     elif switch_state is False:
-        SWITCH.labels(device=name, room=room).set(0)
+        SWITCH.labels(**_metric_labels(dev_id)).set(0)
 
     power_dps = _extract_power_dps(dps)
 
@@ -280,15 +339,17 @@ def _poll_device(dev: dict) -> dict:
     }
 
 
-def _update_energy(device_name: str, room: str, raw: float | None) -> None:
+def _update_energy(device_id: str, raw: float | None) -> None:
     if raw is None:
         return
     try:
         current = float(raw) / 10
     except (ValueError, TypeError):
         return
+    if current < 0:
+        return
 
-    ENERGY.labels(device=device_name, room=room).set(current)
+    _energy_tracker.update(device_id, current)
 
 
 def _poll_all():
@@ -318,6 +379,7 @@ def _poll_all():
 
 
 def _polling_loop():
+    global _cloud_devices
     log.info("Starting metrics polling loop", interval_seconds=POLL_INTERVAL)
     last_discover = 0.0
     while True:
@@ -333,8 +395,10 @@ def _polling_loop():
         time.sleep(POLL_INTERVAL)
 
 
-_polling_thread = threading.Thread(target=_polling_loop, daemon=True)
-_polling_thread.start()
+_polling_thread = None
+if os.getenv("TUYA_DISABLE_POLL_THREAD", "").lower() not in ("1", "true", "yes"):
+    _polling_thread = threading.Thread(target=_polling_loop, daemon=True)
+    _polling_thread.start()
 
 # ---------------------------------------------------------------------------
 # Flask app

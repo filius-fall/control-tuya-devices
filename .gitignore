@@ -18,8 +18,9 @@ logs/
 *.json
 !tuya/static/*.json
 
-# User config
+# User config / local state
 switches.toml
+tuya.db
 rooms.db
 
 # Lock files

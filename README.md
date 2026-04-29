@@ -71,7 +71,7 @@ docker compose up --build
 |----------|---------|-------------|
 | `TUYA_POLL_INTERVAL` | `30` | Seconds between metric polls |
 | `TUYA_DISCOVER_INTERVAL` | `3600` | Seconds between device re-discovery (`0` to disable) |
-| `TUYA_ROOM_DB` | `rooms.db` | SQLite path for room overrides |
+| `TUYA_DB_PATH` | `tuya.db` | Shared SQLite path for room overrides and energy state |
 
 ### Dashboard Features
 
@@ -92,7 +92,7 @@ If the Tuya API doesn't return room data, assign rooms manually:
 4. Download the mapping as JSON for backup or to copy to another server
 5. Upload a JSON mapping to restore or migrate assignments
 
-Room overrides are stored in SQLite (`rooms.db` by default) and survive restarts.
+Room overrides and synthesized energy totals are stored together in SQLite (`tuya.db` by default) and survive restarts.
 
 ### CLI Commands
 
@@ -124,18 +124,37 @@ scrape_configs:
 
 ### Available Metrics
 
-All metrics include `device` and `room` labels:
+All live device metrics use the stable `device_id` label. Human-readable metadata is exposed separately via `tuya_device_info{device_id,device,room}` so renames and room moves do not break metric continuity.
 
 | Metric | Type | Description |
 |--------|------|-------------|
 | `tuya_power_watts` | Gauge | Current power draw |
 | `tuya_current_amps` | Gauge | Current current |
 | `tuya_voltage_volts` | Gauge | Current voltage |
-| `tuya_energy_kwh` | Counter | Cumulative energy (resets at midnight) |
-| `tuya_online` | Gauge | Device reachability (1 = online) |
-| `tuya_switch_state` | Gauge | Relay state (1 = on, 0 = off) |
+| `tuya_energy_kwh` | Gauge | Raw device-reported cumulative energy for the current day (resets at midnight) |
+| `tuya_energy_joules_total` | Counter | Exporter-maintained monotonic total energy synthesized from the daily-reset device meter |
+| `tuya_energy_resets_total` | Counter | Number of daily energy counter resets detected by the exporter |
+| `tuya_online` | Gauge | Device reachability (1 = online, 0 = offline) |
+| `tuya_switch_state` | Gauge | Relay state (1 = on, 0 = off, `NaN` = unknown/offline) |
+| `tuya_device_info` | Gauge | Info metric for joining `device_id` to current `device` and `room` labels |
 
-**Grafana tip:** Use `increase(tuya_energy_kwh[1h])` to get hourly consumption. The Counter type handles midnight resets automatically.
+**Recommended queries**
+
+- Hourly energy in kWh:
+  ```promql
+  increase(tuya_energy_joules_total[1h]) / 3.6e6
+  ```
+- Energy by room in kWh:
+  ```promql
+  sum by (room) (
+    increase(tuya_energy_joules_total[1h])
+      * on (device_id) group_left(device, room) tuya_device_info
+  ) / 3.6e6
+  ```
+- Device-reported usage so far today:
+  ```promql
+  tuya_energy_kwh
+  ```
 
 ## Deployment
 
@@ -144,6 +163,8 @@ All metrics include `device` and `room` labels:
 ```bash
 docker compose up -d
 ```
+
+The bundled compose file persists exporter state in `./data/tuya.db`.
 
 Optional: mount a local `switches.toml` for LAN polling:
 
@@ -186,6 +207,6 @@ An Ansible role is in `deploy/ansible/roles/tuya_exporter/`. Import it into your
 ├── Dockerfile
 ├── pyproject.toml
 ├── switches.toml          # Optional LAN config (gitignored)
-├── rooms.db               # Room overrides (gitignored)
+├── tuya.db                # Shared SQLite state (gitignored)
 └── .env                   # API credentials (gitignored)
 ```

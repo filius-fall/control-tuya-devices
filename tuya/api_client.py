@@ -25,15 +25,53 @@ def get_cloud_client():
 
 
 def get_devices():
-    """Return a list of all devices from the Tuya Cloud."""
+    """Return a list of all devices from the Tuya Cloud, including online status."""
     client = create_tuya_client()
-    devices = client.getdevices()
-    if isinstance(devices, dict) and "Error" in devices:
-        raise RuntimeError(f"Failed to fetch devices: {devices}")
-    log.info(
-        "Fetched device list", count=len(devices) if isinstance(devices, list) else 0
-    )
-    return devices
+    raw = client.getdevices(verbose=True)
+    if isinstance(raw, dict) and "Error" in raw:
+        raise RuntimeError(f"Failed to fetch devices: {raw}")
+    if not isinstance(raw, dict) or "result" not in raw:
+        raise RuntimeError("Unexpected device list format")
+
+    devices = raw["result"]
+    if not isinstance(devices, list):
+        raise RuntimeError("Unexpected device list format")
+
+    result = []
+    for dev in devices:
+        if not isinstance(dev, dict) or "id" not in dev:
+            continue
+        item = {
+            "id": dev["id"],
+            "name": dev.get("name", "").strip(),
+            "online": dev.get("online"),
+            "key": dev.get("local_key", ""),
+            "mac": dev.get("mac", ""),
+        }
+        for k in (
+            "category",
+            "product_name",
+            "product_id",
+            "biz_type",
+            "model",
+            "sub",
+            "icon",
+            "version",
+            "last_ip",
+            "uuid",
+            "node_id",
+            "sn",
+            "gateway_id",
+            "uid",
+            "home_id",
+            "room_id",
+        ):
+            if k in dev:
+                item[k] = dev[k]
+        result.append(item)
+
+    log.info("Fetched device list", count=len(result))
+    return result
 
 
 def get_device_details(client=None):

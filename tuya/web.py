@@ -154,6 +154,14 @@ def _extract_dps_from_status(status: dict | None) -> dict | None:
     return None
 
 
+def _mark_device_offline(name: str, room: str) -> None:
+    """Set all gauges to offline state and clear stale metric values."""
+    ONLINE.labels(device=name, room=room).set(0)
+    POWER.labels(device=name, room=room).set(0)
+    CURRENT.labels(device=name, room=room).set(0)
+    VOLTAGE.labels(device=name, room=room).set(0)
+
+
 def _poll_device(dev: dict) -> dict:
     """Poll a single device and return a status dict."""
     dev_id = dev.get("id", "")
@@ -163,6 +171,18 @@ def _poll_device(dev: dict) -> dict:
     local_cfg = _local_config.get(dev_id, {})
     local_key = local_cfg.get("local_key")
     ip = local_cfg.get("ip")
+
+    # Use the online flag from the discovery list if the cloud already knows
+    # the device is offline.
+    if dev.get("online") is False:
+        _mark_device_offline(name, room)
+        return {
+            "id": dev_id,
+            "name": name,
+            "room": room,
+            "online": False,
+            "source": "—",
+        }
 
     dps = None
     source = "cloud"
@@ -185,8 +205,12 @@ def _poll_device(dev: dict) -> dict:
         except Exception:
             log.warning("Cloud poll failed", device_id=dev_id, exc_info=True)
 
+    # Some offline devices return a non-empty status with all-null values.
+    if dps and all(v is None for v in dps.values()):
+        dps = None
+
     if not dps:
-        ONLINE.labels(device=name, room=room).set(0)
+        _mark_device_offline(name, room)
         return {
             "id": dev_id,
             "name": name,

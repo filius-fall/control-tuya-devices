@@ -17,10 +17,18 @@ import json
 import io
 from datetime import datetime, timezone
 
-from flask import Flask, render_template, jsonify, redirect, url_for, request, send_file
+from flask import (
+    Flask,
+    render_template,
+    jsonify,
+    redirect,
+    url_for,
+    request,
+    send_file,
+    Response,
+)
 from prometheus_client import Gauge, Counter, make_wsgi_app
 from prometheus_client.registry import CollectorRegistry
-from werkzeug.middleware.dispatcher import DispatcherMiddleware
 
 from . import logger
 from . import api_client
@@ -507,8 +515,18 @@ def upload_rooms():
     return redirect(url_for("rooms_page"))
 
 
-# Mount Prometheus metrics at /metrics
-app = DispatcherMiddleware(
-    flask_app,
-    {"/metrics": _prometheus_app},
-)
+@flask_app.route("/metrics")
+def metrics():
+    """Prometheus scrape endpoint."""
+    status_headers = []
+
+    def start_response(status, headers):
+        status_headers[:] = [status, headers]
+
+    body = b"".join(_prometheus_app(request.environ, start_response))
+    status = status_headers[0]
+    headers = status_headers[1]
+    return Response(body, status=status, headers=dict(headers))
+
+
+app = flask_app

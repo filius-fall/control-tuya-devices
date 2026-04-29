@@ -53,36 +53,6 @@ def cmd_setup(args):
         sys.exit(1)
 
 
-def cmd_metrics(args):
-    """Start the Prometheus metrics exporter (via gunicorn)."""
-    import subprocess
-
-    port = args.port
-    workers = args.workers
-    console.print(f"[green]Starting Tuya Prometheus exporter[/green] on port {port}...")
-    console.print(f"[dim]Poll interval: {args.interval}s  |  Workers: {workers}[/dim]")
-    console.print(f"[dim]Metrics endpoint: http://localhost:{port}/metrics[/dim]")
-    console.print("[dim]Press Ctrl+C to stop.[/dim]\n")
-
-    try:
-        subprocess.run(
-            [
-                "gunicorn",
-                "-w",
-                str(workers),
-                "-b",
-                f"0.0.0.0:{port}",
-                "tuya.metrics_exporter:app",
-            ],
-            check=True,
-        )
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Exporter stopped.[/yellow]")
-    except FileNotFoundError:
-        print_error("gunicorn not found. Run: uv pip install gunicorn")
-        sys.exit(1)
-
-
 def cmd_history(args):
     """Show historic power data for a device."""
     from rich.table import Table
@@ -141,23 +111,6 @@ def cli():
         type=float,
         default=2.0,
         help="Refresh interval in seconds (default: 2)",
-    )
-
-    # metrics
-    p_metrics = sub.add_parser(
-        "metrics", help="Start Prometheus metrics exporter (gunicorn)"
-    )
-    p_metrics.add_argument(
-        "--port", type=int, default=8000, help="HTTP port (default: 8000)"
-    )
-    p_metrics.add_argument(
-        "--workers", type=int, default=1, help="Gunicorn workers (default: 1)"
-    )
-    p_metrics.add_argument(
-        "--interval",
-        type=int,
-        default=30,
-        help="Device poll interval in seconds (default: 30)",
     )
 
     # setup

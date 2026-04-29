@@ -264,7 +264,10 @@
     if (card.dataset.online !== 'true') return;
     currentDeviceId = card.dataset.id;
     modalName.textContent = card.querySelector('.device-name').textContent;
-    modalState.textContent = card.dataset.on === 'true' ? 'Currently ON' : 'Currently off';
+    const isOn = card.dataset.on === 'true';
+    modalState.textContent = isOn ? 'Currently ON' : 'Currently off';
+    btnOn.style.display = isOn ? 'none' : '';
+    btnOff.style.display = isOn ? '' : 'none';
     modalError.textContent = '';
     modal.classList.add('active');
   }

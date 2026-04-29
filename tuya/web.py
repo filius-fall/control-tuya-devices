@@ -1,26 +1,35 @@
-"""Prometheus metrics exporter for Tuya devices with web UI.
+"""Flask web UI and Prometheus metrics exporter for Tuya devices.
 
 Usage with gunicorn:
-    gunicorn -w 1 -b 0.0.0.0:8000 tuya.metrics_exporter:app
+    gunicorn -w 1 -b 0.0.0.0:8000 tuya.web:app
 
 Routes:
-    /         — Device list and discovery control
-    /refresh  — Trigger device re-discovery
-    /metrics  — Prometheus scrape endpoint
+    /              — Device dashboard
+    /refresh       — Trigger device re-discovery
+    /poll/<id>     — JSON with current device stats
+    /metrics       — Prometheus scrape endpoint
 """
 
 import threading
 import time
 import os
-import json
 
+from flask import Flask, render_template, jsonify, redirect, url_for
 from prometheus_client import Gauge, Counter, make_wsgi_app
 from prometheus_client.registry import CollectorRegistry
+from werkzeug.middleware.dispatcher import DispatcherMiddleware
 
 from . import logger
 from . import api_client
 from . import local_client
 from . import devices as device_config
+from .rich_output import (
+    _extract_power_dps,
+    _fmt_power,
+    _fmt_current,
+    _fmt_voltage,
+    _fmt_energy,
+)
 
 log = logger.logs
 
@@ -29,15 +38,9 @@ DISCOVER_INTERVAL = int(os.getenv("TUYA_DISCOVER_INTERVAL", "3600"))
 
 REGISTRY = CollectorRegistry()
 
-POWER = Gauge(
-    "tuya_power_watts", "Current power draw", ["device"], registry=REGISTRY
-)
-CURRENT = Gauge(
-    "tuya_current_amps", "Current current", ["device"], registry=REGISTRY
-)
-VOLTAGE = Gauge(
-    "tuya_voltage_volts", "Current voltage", ["device"], registry=REGISTRY
-)
+POWER = Gauge("tuya_power_watts", "Current power draw", ["device"], registry=REGISTRY)
+CURRENT = Gauge("tuya_current_amps", "Current current", ["device"], registry=REGISTRY)
+VOLTAGE = Gauge("tuya_voltage_volts", "Current voltage", ["device"], registry=REGISTRY)
 ENERGY = Counter(
     "tuya_energy_kwh",
     "Cumulative energy consumption (resets at midnight)",
@@ -85,7 +88,8 @@ def _discover_devices() -> list[dict]:
         return []
 
 
-def _poll_device(dev: dict) -> None:
+def _poll_device(dev: dict) -> dict:
+    """Poll a single device and return a status dict."""
     dev_id = dev.get("id", "")
     name = dev.get("name", "unknown")
     version = dev.get("version", "3.3")
@@ -94,6 +98,7 @@ def _poll_device(dev: dict) -> None:
     ip = local_cfg.get("ip")
 
     dps = None
+    source = "cloud"
     online = False
 
     if local_key and ip:
@@ -102,6 +107,7 @@ def _poll_device(dev: dict) -> None:
         )
         if local_status and "dps" in local_status:
             dps = local_status["dps"]
+            source = "local"
             online = True
 
     if dps is None:
@@ -122,7 +128,12 @@ def _poll_device(dev: dict) -> None:
 
     if not dps:
         ONLINE.labels(device=name).set(0)
-        return
+        return {
+            "id": dev_id,
+            "name": name,
+            "online": False,
+            "source": "—",
+        }
 
     ONLINE.labels(device=name).set(1)
 
@@ -156,6 +167,20 @@ def _poll_device(dev: dict) -> None:
     elif switch_state is False:
         SWITCH.labels(device=name).set(0)
 
+    power_dps = _extract_power_dps(dps)
+
+    return {
+        "id": dev_id,
+        "name": name,
+        "online": True,
+        "source": source,
+        "on": switch_state is True,
+        "power": _fmt_power(power_dps.get("power")),
+        "current": _fmt_current(power_dps.get("current")),
+        "voltage": _fmt_voltage(power_dps.get("voltage")),
+        "energy": _fmt_energy(power_dps.get("energy")),
+    }
+
 
 def _update_energy(device_name: str, raw: float | None) -> None:
     if raw is None:
@@ -184,11 +209,21 @@ def _poll_all():
         _cloud_devices = _discover_devices()
         log.info("Discovered devices", count=len(_cloud_devices))
 
+    statuses = []
     for dev in _cloud_devices:
         try:
-            _poll_device(dev)
+            statuses.append(_poll_device(dev))
         except Exception:
             log.error("Poll failed", device=dev.get("name"), exc_info=True)
+            statuses.append(
+                {
+                    "id": dev.get("id", ""),
+                    "name": dev.get("name", "unknown"),
+                    "online": False,
+                    "source": "—",
+                }
+            )
+    return statuses
 
 
 def _polling_loop():
@@ -211,88 +246,48 @@ _polling_thread = threading.Thread(target=_polling_loop, daemon=True)
 _polling_thread.start()
 
 # ---------------------------------------------------------------------------
-# Web UI
+# Flask app
 # ---------------------------------------------------------------------------
 
-_HTML_HEAD = b"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Tuya Exporter</title>
-<style>
-body { font-family: system-ui, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; background: #0d1117; color: #c9d1d9; }
-h1 { color: #58a6ff; }
-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #30363d; }
-th { color: #8b949e; font-weight: 600; }
-tr:hover { background: #161b22; }
-.status-online { color: #3fb950; }
-.status-offline { color: #f85149; }
-button { background: #238636; color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-size: 14px; }
-button:hover { background: #2ea043; }
-.refresh-note { color: #8b949e; font-size: 13px; margin-top: 8px; }
-a { color: #58a6ff; }
-</style>
-</head>
-<body>
-"""
-
-_HTML_FOOT = b"""</body></html>"""
+flask_app = Flask(
+    __name__,
+    template_folder="templates",
+    static_folder="static",
+)
 
 
-def _render_index() -> bytes:
-    rows = []
-    for dev in _cloud_devices:
-        dev_id = dev.get("id", "N/A")
-        name = dev.get("name", "Unnamed")
-        version = dev.get("version", "3.3")
-        has_local = dev.get("id", "") in _local_config
-        source = "local" if has_local else "cloud"
-
-        rows.append(
-            f"<tr><td>{name}</td><td><code>{dev_id}</code></td>"
-            f"<td>{version}</td><td>{source}</td></tr>"
-        )
-
-    body = (
-        "<h1>Tuya Device Exporter</h1>"
-        "<p>"
-        f"<strong>{len(_cloud_devices)}</strong> device(s) discovered. "
-        f"Poll interval: <strong>{POLL_INTERVAL}s</strong>. "
-        f"Re-discovery: <strong>{'every ' + str(DISCOVER_INTERVAL) + 's' if DISCOVER_INTERVAL > 0 else 'disabled'}</strong>."
-        "</p>"
-        '<form method="post" action="/refresh">'
-        '<button type="submit">Refresh Discovery</button>'
-        "</form>"
-        '<p class="refresh-note">This fetches the latest device list from the Tuya Cloud.</p>'
-        "<table>"
-        "<tr><th>Device</th><th>ID</th><th>Version</th><th>Source</th></tr>"
-        + "".join(rows)
-        + "</table>"
-        '<hr><p><a href="/metrics">/metrics</a> — Prometheus scrape endpoint</p>'
+@flask_app.route("/")
+def index():
+    statuses = _poll_all()
+    online_count = sum(1 for s in statuses if s.get("online"))
+    return render_template(
+        "index.html",
+        devices=statuses,
+        online_count=online_count,
+        total_count=len(statuses),
+        poll_interval=POLL_INTERVAL,
+        discover_interval=DISCOVER_INTERVAL,
     )
-    return _HTML_HEAD + body.encode("utf-8") + _HTML_FOOT
 
 
-def _refresh_devices(environ, start_response):
+@flask_app.route("/refresh", methods=["POST"])
+def refresh():
     global _cloud_devices
     _cloud_devices = _discover_devices()
     log.info("Manual device refresh", count=len(_cloud_devices))
-    start_response("302 Found", [("Location", "/")])
-    return [b""]
+    return redirect(url_for("index"))
 
 
-def app(environ, start_response):
-    path = environ.get("PATH_INFO", "/")
-    method = environ.get("REQUEST_METHOD", "GET")
+@flask_app.route("/poll/<device_id>")
+def poll_device(device_id):
+    for dev in _cloud_devices:
+        if dev.get("id") == device_id:
+            return jsonify(_poll_device(dev))
+    return jsonify({"error": "Device not found"}), 404
 
-    if path == "/metrics":
-        return _prometheus_app(environ, start_response)
-    elif path == "/refresh" and method == "POST":
-        return _refresh_devices(environ, start_response)
-    elif path == "/":
-        start_response("200 OK", [("Content-Type", "text/html; charset=utf-8")])
-        return [_render_index()]
-    else:
-        start_response("404 Not Found", [("Content-Type", "text/plain")])
-        return [b"Not Found"]
+
+# Mount Prometheus metrics at /metrics
+app = DispatcherMiddleware(
+    flask_app,
+    {"/metrics": _prometheus_app},
+)

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tuya Control Panel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="brand">
+    <h1>Tuya</h1>
+    <span class="tagline">Power Monitor</span>
+  </div>
+  <div class="meta">
+    <div class="stat-pill online">
+      <span class="dot"></span>
+      {{ online_count }}/{{ total_count }} online
+    </div>
+    <form method="post" action="{{ url_for('refresh') }}" class="refresh-form">
+      <button type="submit" class="btn-refresh">Rediscover</button>
+    </form>
+    <a href="/metrics" class="btn-metrics">/metrics</a>
+  </div>
+</header>
+
+<main class="dashboard">
+  {% for dev in devices %}
+  <article class="device-card {% if not dev.online %}offline{% endif %}">
+    <div class="card-header">
+      <h2 class="device-name">{{ dev.name }}</h2>
+      <div class="device-status">
+        {% if dev.online %}
+          <span class="badge online">● online</span>
+        {% else %}
+          <span class="badge offline">✗ offline</span>
+        {% endif %}
+        {% if dev.on %}
+          <span class="badge on">ON</span>
+        {% elif dev.on is false %}
+          <span class="badge off">off</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="metrics-grid">
+      <div class="metric">
+        <span class="metric-label">Power</span>
+        <span class="metric-value {% if dev.power != '—' %}active{% endif %}">{{ dev.power }}</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Current</span>
+        <span class="metric-value">{{ dev.current }}</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Voltage</span>
+        <span class="metric-value">{{ dev.voltage }}</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Energy</span>
+        <span class="metric-value energy">{{ dev.energy }}</span>
+      </div>
+    </div>
+
+    <div class="card-footer">
+      <code class="device-id">{{ dev.id }}</code>
+      <span class="source">{{ dev.source }}</span>
+    </div>
+  </article>
+  {% endfor %}
+</main>
+
+<footer class="site-footer">
+  <p>Poll interval: <strong>{{ poll_interval }}s</strong> · Re-discovery: <strong>{% if discover_interval > 0 %}{{ discover_interval }}s{% else %}disabled{% endif %}</strong></p>
+</footer>
+
+</body>
+</html>

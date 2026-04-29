@@ -9,6 +9,8 @@ services:
       - .env
     environment:
       - TUYA_POLL_INTERVAL=30
+      - TUYA_DISCOVER_INTERVAL=3600
     volumes:
-      - ./switches.toml:/app/switches.toml:ro
+      # Optional: mount switches.toml only if you want local polling
+      # - ./switches.toml:/app/switches.toml:ro
       - ./logs:/app/logs

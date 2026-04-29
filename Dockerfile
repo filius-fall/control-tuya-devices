@@ -16,4 +16,4 @@ RUN uv sync --no-dev
 # Default: run metrics exporter via gunicorn
 # Override with docker run args if needed
 EXPOSE 8000
-CMD ["uv", "run", "gunicorn", "-w", "1", "-b", "0.0.0.0:8000", "tuya.metrics_exporter:app"]
+CMD ["uv", "run", "gunicorn", "-w", "1", "-b", "0.0.0.0:8000", "tuya.web:app"]

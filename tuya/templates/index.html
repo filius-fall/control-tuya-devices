@@ -18,7 +18,7 @@
   <div class="meta">
     <div class="stat-pill online">
       <span class="dot"></span>
-      {{ online_count }}/{{ total_count }} online
+      <span id="online-count">{{ online_count }}</span>/<span id="total-count">{{ total_count }}</span> online
     </div>
     <form method="post" action="{{ url_for('refresh') }}" class="refresh-form">
       <button type="submit" class="btn-refresh">Rediscover</button>
@@ -27,9 +27,42 @@
   </div>
 </header>
 
-<main class="dashboard">
+<section class="filters">
+  <div class="filter-group">
+    <input type="text" id="search" placeholder="Filter by name..." class="filter-input">
+  </div>
+  <div class="filter-group toggles">
+    <button class="toggle-btn active" data-filter="all">All</button>
+    <button class="toggle-btn" data-filter="on">On</button>
+    <button class="toggle-btn" data-filter="off">Off</button>
+    <button class="toggle-btn" data-filter="online">Online</button>
+    <button class="toggle-btn" data-filter="offline">Offline</button>
+  </div>
+  <div class="filter-group sort">
+    <label for="sort">Sort</label>
+    <select id="sort" class="filter-select">
+      <option value="name">Name</option>
+      <option value="power">Power</option>
+      <option value="current">Current</option>
+      <option value="voltage">Voltage</option>
+      <option value="energy">Energy</option>
+    </select>
+    <button id="sort-dir" class="sort-dir" title="Toggle ascending/descending">↓</button>
+  </div>
+</section>
+
+<main class="dashboard" id="dashboard">
   {% for dev in devices %}
-  <article class="device-card {% if not dev.online %}offline{% endif %}">
+  <article
+    class="device-card {% if not dev.online %}offline{% endif %}"
+    data-name="{{ dev.name | lower }}"
+    data-online="{{ 'true' if dev.online else 'false' }}"
+    data-on="{{ 'true' if dev.on else 'false' }}"
+    data-power="{{ dev.power | replace(' W', '') | replace('—', '-1') }}"
+    data-current="{{ dev.current | replace(' A', '') | replace('—', '-1') }}"
+    data-voltage="{{ dev.voltage | replace(' V', '') | replace('—', '-1') }}"
+    data-energy="{{ dev.energy | replace(' kWh', '') | replace('—', '-1') }}"
+  >
     <div class="card-header">
       <h2 class="device-name">{{ dev.name }}</h2>
       <div class="device-status">
@@ -76,6 +109,111 @@
 <footer class="site-footer">
   <p>Poll interval: <strong>{{ poll_interval }}s</strong> · Re-discovery: <strong>{% if discover_interval > 0 %}{{ discover_interval }}s{% else %}disabled{% endif %}</strong></p>
 </footer>
+
+<script>
+(function() {
+  const dashboard = document.getElementById('dashboard');
+  const cards = Array.from(dashboard.querySelectorAll('.device-card'));
+  const searchInput = document.getElementById('search');
+  const toggleBtns = document.querySelectorAll('.toggle-btn');
+  const sortSelect = document.getElementById('sort');
+  const sortDirBtn = document.getElementById('sort-dir');
+
+  let activeFilter = 'all';
+  let sortKey = 'name';
+  let sortAsc = true;
+
+  function applyFilters() {
+    const query = searchInput.value.trim().toLowerCase();
+
+    cards.forEach(card => {
+      const name = card.dataset.name;
+      const online = card.dataset.online === 'true';
+      const on = card.dataset.on === 'true';
+
+      let visible = true;
+
+      // Name search
+      if (query && !name.includes(query)) {
+        visible = false;
+      }
+
+      // State toggle
+      if (activeFilter === 'on' && !on) visible = false;
+      if (activeFilter === 'off' && on) visible = false;
+      if (activeFilter === 'online' && !online) visible = false;
+      if (activeFilter === 'offline' && online) visible = false;
+
+      card.style.display = visible ? '' : 'none';
+    });
+
+    updateCounts();
+  }
+
+  function applySort() {
+    const visibleCards = cards.filter(c => c.style.display !== 'none');
+
+    visibleCards.sort((a, b) => {
+      let va = a.dataset[sortKey];
+      let vb = b.dataset[sortKey];
+
+      // Numeric fields
+      if (['power', 'current', 'voltage', 'energy'].includes(sortKey)) {
+        va = parseFloat(va);
+        vb = parseFloat(vb);
+        if (isNaN(va)) va = -1;
+        if (isNaN(vb)) vb = -1;
+      }
+
+      if (va < vb) return sortAsc ? -1 : 1;
+      if (va > vb) return sortAsc ? 1 : -1;
+      return 0;
+    });
+
+    visibleCards.forEach(card => dashboard.appendChild(card));
+  }
+
+  function updateCounts() {
+    const visible = cards.filter(c => c.style.display !== 'none');
+    const visibleOnline = visible.filter(c => c.dataset.online === 'true');
+    document.getElementById('online-count').textContent = visibleOnline.length;
+    document.getElementById('total-count').textContent = visible.length;
+  }
+
+  // Search
+  searchInput.addEventListener('input', () => {
+    applyFilters();
+    applySort();
+  });
+
+  // Toggles
+  toggleBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      toggleBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeFilter = btn.dataset.filter;
+      applyFilters();
+      applySort();
+    });
+  });
+
+  // Sort key
+  sortSelect.addEventListener('change', () => {
+    sortKey = sortSelect.value;
+    applySort();
+  });
+
+  // Sort direction
+  sortDirBtn.addEventListener('click', () => {
+    sortAsc = !sortAsc;
+    sortDirBtn.textContent = sortAsc ? '↓' : '↑';
+    applySort();
+  });
+
+  // Initial sort
+  applySort();
+})();
+</script>
 
 </body>
 </html>

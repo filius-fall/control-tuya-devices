@@ -4,14 +4,14 @@ Usage with gunicorn:
     gunicorn -w 1 -b 0.0.0.0:8000 tuya.metrics_exporter:app
 
 The background polling thread runs in the worker process and updates
-gauges that are served via the WSGI app.
+metrics that are served via the WSGI app.
 """
 
 import threading
 import time
 import os
 
-from prometheus_client import Gauge, make_wsgi_app
+from prometheus_client import Gauge, Counter, make_wsgi_app
 from prometheus_client.registry import CollectorRegistry
 
 from . import logger
@@ -22,7 +22,6 @@ log = logger.logs
 
 POLL_INTERVAL = int(os.getenv("TUYA_POLL_INTERVAL", "30"))
 
-# Create a fresh registry so we don't pick up default process metrics twice
 REGISTRY = CollectorRegistry()
 
 POWER = Gauge(
@@ -46,9 +45,10 @@ VOLTAGE = Gauge(
     registry=REGISTRY,
 )
 
-ENERGY = Gauge(
+# Counter so increase() handles resets correctly (e.g. midnight)
+ENERGY = Counter(
     "tuya_energy_kwh",
-    "Cumulative energy consumption",
+    "Cumulative energy consumption (resets at midnight)",
     ["device"],
     registry=REGISTRY,
 )
@@ -67,9 +67,42 @@ SWITCH = Gauge(
     registry=REGISTRY,
 )
 
+# Track previous raw add_ele reading per device to compute deltas
+_prev_energy: dict[str, float] = {}
+
+
+def _update_energy(device_name: str, raw: float | None) -> None:
+    """Update the energy counter, handling midnight resets.
+
+    Tuya devices report add_ele in 0.1 kWh units. We convert to kWh
+    and use a Counter so Prometheus increase() handles resets.
+    """
+    if raw is None:
+        return
+    try:
+        current = float(raw) / 10  # convert to kWh
+    except (ValueError, TypeError):
+        return
+
+    prev = _prev_energy.get(device_name)
+    if prev is None:
+        # First reading — we don't know the delta, so just record the baseline
+        _prev_energy[device_name] = current
+        return
+
+    if current >= prev:
+        delta = current - prev
+    else:
+        # Midnight reset: the device rolled over to 0 (or close to it)
+        delta = current
+
+    if delta > 0:
+        ENERGY.labels(device=device_name).inc(delta)
+        _prev_energy[device_name] = current
+
 
 def _poll_all():
-    """Poll all devices and update Prometheus gauges."""
+    """Poll all devices and update Prometheus metrics."""
     switches = device_config.load_switches()
     if not switches:
         log.warning("No switches configured, skipping poll")
@@ -111,13 +144,9 @@ def _poll_all():
             except (ValueError, TypeError):
                 pass
 
-        # Energy (0.1 kWh -> kWh)
+        # Energy (0.1 kWh -> kWh, counter with reset handling)
         raw_energy = dps.get("add_ele") or dps.get("total_power")
-        if raw_energy is not None:
-            try:
-                ENERGY.labels(device=name).set(float(raw_energy) / 10)
-            except (ValueError, TypeError):
-                pass
+        _update_energy(name, raw_energy)
 
         # Switch state
         switch_state = dps.get("switch_1") or dps.get("switch") or dps.get("led_switch")
@@ -148,9 +177,7 @@ def _polling_loop():
         time.sleep(POLL_INTERVAL)
 
 
-# Start background polling thread
 _polling_thread = threading.Thread(target=_polling_loop, daemon=True)
 _polling_thread.start()
 
-# WSGI app for gunicorn
 app = make_wsgi_app(registry=REGISTRY)

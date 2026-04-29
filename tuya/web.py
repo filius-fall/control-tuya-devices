@@ -253,7 +253,13 @@ def _poll_device(dev: dict) -> dict:
     raw_energy = dps.get("add_ele") or dps.get("total_power")
     _update_energy(name, room, raw_energy)
 
-    switch_state = dps.get("switch_1") or dps.get("switch") or dps.get("led_switch")
+    # Use key-in-dict check so a literal False value is not skipped by `or`.
+    switch_state: bool | None = None
+    for code in ("switch_1", "switch", "led_switch"):
+        if code in dps:
+            switch_state = bool(dps[code])
+            break
+
     if switch_state is True:
         SWITCH.labels(device=name, room=room).set(1)
     elif switch_state is False:

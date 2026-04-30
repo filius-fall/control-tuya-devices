@@ -49,7 +49,7 @@ def fetch_logs(
         log.warning("Empty or invalid log response", device_id=device_id)
         return []
 
-    if "Error" in response:
+    if "Error" in response or response.get("success") is False:
         log.warning("Log fetch error", device_id=device_id, error=response)
         return []
 

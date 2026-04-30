@@ -3,18 +3,13 @@ import os
 from datetime import datetime, timezone
 
 from . import logger
-from . import api_client
 from . import local_client
 
 log = logger.logs
 
 
 def _collect_device_reading(device: dict) -> dict | None:
-    """Fetch status for one device and return a flattened reading dict.
-
-    Tries local control first (if local_key + ip are configured).
-    Falls back to cloud polling otherwise.
-    """
+    """Fetch status for one device locally and return a flattened reading dict."""
     device_id = device.get("id")
     name = device.get("name", "unknown")
     if not device_id:
@@ -23,35 +18,19 @@ def _collect_device_reading(device: dict) -> dict | None:
     dps = None
     source = None
 
-    # Try local control first — this is the most reliable way to get power DPs
-    local_key = device.get("local_key")
-    ip = device.get("ip")
+    local_key = device.get("local_key") or device.get("key")
+    ip = device.get("ip") or device.get("last_ip")
     version = device.get("version", "3.3")
     if local_key and ip:
         local_status = local_client.get_device_status_local(
-            device_id, local_key, ip, version
+            device_id, ip_address=ip, local_key=local_key, version=version
         )
         if local_status and "dps" in local_status:
             dps = local_status["dps"]
             source = "local"
 
-    # Fall back to cloud polling
     if dps is None:
-        cloud_status = api_client.get_device_status(device_id)
-        if cloud_status and isinstance(cloud_status, dict):
-            result = cloud_status.get("result", [])
-            if isinstance(result, list):
-                dps = {
-                    item["code"]: item.get("value")
-                    for item in result
-                    if isinstance(item, dict) and "code" in item
-                }
-            elif isinstance(result, dict):
-                dps = result
-            source = "cloud"
-
-    if dps is None:
-        log.warning("No reading for device", device=name, device_id=device_id)
+        log.warning("No local reading for device", device=name, device_id=device_id)
         return None
 
     reading = {
@@ -71,7 +50,7 @@ def run_once():
     switches = device_config.load_switches()
     if not switches:
         log.error(
-            "No switches configured. Add them to switches.toml or run 'tuya setup'."
+            "No devices configured. Run 'tuya setup' to refresh the SQLite cache."
         )
         return
 

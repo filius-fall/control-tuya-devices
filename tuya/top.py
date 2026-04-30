@@ -16,7 +16,6 @@ from rich import box
 from rich.console import Console
 
 from . import logger
-from . import api_client
 from . import local_client
 from . import devices as device_config
 from .rich_output import (
@@ -45,8 +44,8 @@ def _fetch_all_statuses(switches: list[dict]) -> dict[str, dict]:
         source = None
         online = False
 
-        local_key = sw.get("local_key")
-        ip = sw.get("ip")
+        local_key = sw.get("local_key") or sw.get("key")
+        ip = sw.get("ip") or sw.get("last_ip")
         version = sw.get("version", "3.3")
         if local_key and ip:
             local_status = local_client.get_device_status_local(
@@ -56,23 +55,6 @@ def _fetch_all_statuses(switches: list[dict]) -> dict[str, dict]:
                 dps = local_status["dps"]
                 source = "local"
                 online = True
-
-        if dps is None:
-            cloud_status = api_client.get_device_status(dev_id)
-            if cloud_status and isinstance(cloud_status, dict):
-                online = True
-                result_data = cloud_status.get("result", [])
-                if isinstance(result_data, list):
-                    dps = {
-                        item["code"]: item.get("value")
-                        for item in result_data
-                        if isinstance(item, dict) and "code" in item
-                    }
-                elif isinstance(result_data, dict):
-                    dps = result_data
-                source = "cloud"
-            else:
-                online = False
 
         result[dev_id] = {
             "online": online,
@@ -171,7 +153,7 @@ def run_top(interval: float = REFRESH_INTERVAL) -> None:
     """Run the live updating top view."""
     switches = device_config.load_switches()
     if not switches:
-        console.print("[red]No switches configured.[/red] Run: tuya setup")
+        console.print("[red]No devices configured.[/red] Run: tuya setup")
         return
 
     with Live(refresh_per_second=1 / interval, screen=True) as live:

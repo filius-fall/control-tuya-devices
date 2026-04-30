@@ -4,9 +4,8 @@ import sys
 from rich.console import Console
 
 from tuya.main import run_once
-from tuya.devices import save_example_config
+from tuya import device_store
 from tuya import setup as setup_module
-from tuya import textual_setup
 from tuya import top as top_module
 from tuya import history as history_module
 from tuya.rich_output import print_device_table, print_summary, print_error
@@ -38,19 +37,61 @@ def cmd_status():
 
 
 def cmd_setup(args):
-    """Auto-generate switches.toml from Tuya Cloud (and optional LAN scan)."""
-    path = args.output or "switches.toml"
+    """Refresh the SQLite device cache from Tuya Cloud and optional LAN scan."""
     try:
-        if args.non_interactive:
-            content = setup_module.build_switches_toml(scan=args.scan)
-            with open(path, "w") as f:
-                f.write(content)
-            console.print(f"[green]Wrote {path}[/green] with all devices enabled.")
-        else:
-            textual_setup.run_textual_setup(path=path, scan=args.scan)
+        devices = setup_module.refresh_devices(scan=args.scan)
+        console.print(
+            f"[green]Refreshed {len(devices)} devices into SQLite cache.[/green]"
+        )
     except Exception as exc:
         print_error(str(exc))
         sys.exit(1)
+
+
+def cmd_list_devices(args):
+    """List cached devices, optionally refreshing from cloud first."""
+    try:
+        if args.refresh:
+            devices = setup_module.refresh_devices(scan=args.scan)
+        else:
+            devices = device_store.get_devices()
+    except Exception as exc:
+        print_error(str(exc))
+        sys.exit(1)
+
+    if not devices:
+        print_error("No devices configured. Run 'tuya setup' or 'tuya list-devices --refresh'.")
+        sys.exit(1)
+
+    from rich.table import Table
+    from rich import box
+
+    table = Table(
+        title="Cached Devices",
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold magenta",
+    )
+    table.add_column("Device", style="cyan")
+    table.add_column("Device ID", style="dim")
+    table.add_column("Room")
+    table.add_column("IP")
+    table.add_column("Version")
+    table.add_column("Local Key", justify="center")
+
+    for dev in devices:
+        local_key = dev.get("local_key") or dev.get("key") or ""
+        table.add_row(
+            dev.get("name", "unknown"),
+            dev.get("id", ""),
+            dev.get("room") or "unknown",
+            dev.get("ip") or dev.get("last_ip") or "—",
+            str(dev.get("version") or "3.3"),
+            "yes" if local_key else "no",
+        )
+
+    console.print(table)
+    console.print(f"[dim]{len(devices)} device(s)[/dim]")
 
 
 def cmd_history(args):
@@ -115,9 +156,8 @@ def cli():
 
     # setup
     p_setup = sub.add_parser(
-        "setup", help="Auto-generate switches.toml from Tuya Cloud"
+        "setup", help="Refresh the SQLite device cache from Tuya Cloud"
     )
-    p_setup.add_argument("--output", default="switches.toml", help="Output path")
     p_setup.add_argument(
         "--no-scan",
         dest="scan",
@@ -125,11 +165,20 @@ def cli():
         default=True,
         help="Skip LAN IP scan",
     )
-    p_setup.add_argument(
-        "--non-interactive",
+
+    # list-devices
+    p_list = sub.add_parser("list-devices", help="List cached devices")
+    p_list.add_argument(
+        "--refresh",
         action="store_true",
-        default=False,
-        help="Write all devices instead of interactive selection",
+        help="Refresh the SQLite cache from Tuya Cloud before listing",
+    )
+    p_list.add_argument(
+        "--no-scan",
+        dest="scan",
+        action="store_false",
+        default=True,
+        help="Skip LAN IP scan when used with --refresh",
     )
 
     # history
@@ -152,6 +201,8 @@ def cli():
         cmd_metrics(args)
     elif args.command == "setup":
         cmd_setup(args)
+    elif args.command == "list-devices":
+        cmd_list_devices(args)
     elif args.command == "history":
         cmd_history(args)
     else:

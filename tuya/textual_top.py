@@ -6,7 +6,6 @@ from textual.app import App, ComposeResult
 from textual.containers import Vertical, Horizontal
 from textual.widgets import DataTable, Static, Header, Footer, Sparkline
 
-from . import api_client
 from . import local_client
 from . import devices as device_config
 from . import logger
@@ -58,7 +57,7 @@ class TopApp(App):
         self.switches = device_config.load_switches()
         if not self.switches:
             self.notify(
-                "No switches configured. Run 'tuya setup' first.", severity="error"
+                "No devices configured. Run 'tuya setup' first.", severity="error"
             )
             return
 
@@ -155,8 +154,8 @@ class TopApp(App):
 
     def _poll_device(self, sw: dict) -> tuple[dict, str, bool]:
         dev_id = sw.get("id", "")
-        local_key = sw.get("local_key")
-        ip = sw.get("ip")
+        local_key = sw.get("local_key") or sw.get("key")
+        ip = sw.get("ip") or sw.get("last_ip")
         version = sw.get("version", "3.3")
 
         if local_key and ip:
@@ -165,21 +164,6 @@ class TopApp(App):
             )
             if local_status and "dps" in local_status:
                 return local_status["dps"], "local", True
-
-        cloud_status = api_client.get_device_status(dev_id)
-        if cloud_status and isinstance(cloud_status, dict):
-            result = cloud_status.get("result", [])
-            if isinstance(result, list):
-                dps = {
-                    item["code"]: item.get("value")
-                    for item in result
-                    if isinstance(item, dict) and "code" in item
-                }
-            elif isinstance(result, dict):
-                dps = result
-            else:
-                dps = {}
-            return dps, "cloud", True
 
         return {}, "—", False
 

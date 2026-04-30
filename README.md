@@ -30,15 +30,13 @@ You need the **Device Connection Service** and **Home Management** APIs enabled 
 
 ### 2. Device Discovery (optional)
 
-The exporter auto-discovers all devices from the Tuya Cloud every hour. No manual configuration is required for cloud polling.
-
-If you want faster local LAN polling, generate a `switches.toml`:
+Device discovery is manual. Refresh the cached device list and LAN metadata into SQLite with:
 
 ```bash
 uv run tuya setup
 ```
 
-This opens an interactive TUI where you can select devices and write their local credentials. `switches.toml` is gitignored.
+This performs a cloud refresh and optional LAN scan, then stores the results in `tuya.db` for ongoing local polling.
 
 ## Usage
 
@@ -63,15 +61,14 @@ docker compose up --build
 | `/` | Device dashboard with power/current/voltage/energy readings |
 | `/metrics` | Prometheus scrape endpoint |
 | `/rooms` | Room assignment management |
-| `/refresh` | Trigger immediate device re-discovery |
+| `/refresh` | Trigger manual device re-discovery and refresh the SQLite cache |
 
 **Environment variables:**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TUYA_POLL_INTERVAL` | `30` | Seconds between metric polls |
-| `TUYA_DISCOVER_INTERVAL` | `3600` | Seconds between device re-discovery (`0` to disable) |
-| `TUYA_DB_PATH` | `tuya.db` | Shared SQLite path for room overrides and energy state |
+| `TUYA_DB_PATH` | `tuya.db` | Shared SQLite path for device cache, room overrides, status cache, and energy state |
 
 ### Dashboard Features
 
@@ -92,7 +89,7 @@ If the Tuya API doesn't return room data, assign rooms manually:
 4. Download the mapping as JSON for backup or to copy to another server
 5. Upload a JSON mapping to restore or migrate assignments
 
-Room overrides and synthesized energy totals are stored together in SQLite (`tuya.db` by default) and survive restarts.
+Discovered devices, room overrides, cached statuses, and synthesized energy totals are stored together in SQLite (`tuya.db` by default) and survive restarts.
 
 ### CLI Commands
 
@@ -105,6 +102,10 @@ uv run tuya-top
 
 # One-shot status table
 uv run tuya status
+
+# List cached devices
+uv run tuya list-devices
+uv run tuya list-devices --refresh
 
 # Fetch historic power data
 uv run tuya history <device_id> --hours 24 --verbose
@@ -166,12 +167,7 @@ docker compose up -d
 
 The bundled compose file persists exporter state in `./data/tuya.db`.
 
-Optional: mount a local `switches.toml` for LAN polling:
-
-```yaml
-volumes:
-  - ./switches.toml:/app/switches.toml:ro
-```
+No separate `switches.toml` is required; device metadata is cached in SQLite.
 
 ### systemd
 
@@ -206,7 +202,6 @@ An Ansible role is in `deploy/ansible/roles/tuya_exporter/`. Import it into your
 │   └── ansible/           # Ansible role
 ├── Dockerfile
 ├── pyproject.toml
-├── switches.toml          # Optional LAN config (gitignored)
-├── tuya.db                # Shared SQLite state (gitignored)
+├── tuya.db                # Shared SQLite device/status/room/energy state (gitignored)
 └── .env                   # API credentials (gitignored)
 ```

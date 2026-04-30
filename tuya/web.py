@@ -34,8 +34,8 @@ from prometheus_client.registry import CollectorRegistry
 from . import logger
 from . import api_client
 from . import local_client
-from . import devices as device_config
 from . import room_config
+from . import device_store
 from .energy_tracker import EnergyTracker
 from .rich_output import (
     _extract_power_dps,
@@ -48,7 +48,7 @@ from .rich_output import (
 log = logger.logs
 
 POLL_INTERVAL = int(os.getenv("TUYA_POLL_INTERVAL", "30"))
-DISCOVER_INTERVAL = int(os.getenv("TUYA_DISCOVER_INTERVAL", "3600"))
+DISCOVER_INTERVAL = int(os.getenv("TUYA_DISCOVER_INTERVAL", "0"))
 
 REGISTRY = CollectorRegistry()
 METRIC_LABELS = ["device_id"]
@@ -75,12 +75,8 @@ SWITCH = Gauge(
     registry=REGISTRY,
 )
 
-_cloud_devices: list[dict] = []
-_device_rooms: dict[str, str] = {}
-_local_config: dict[str, dict] = {}
-_local_config_mtime: float = 0.0
 _energy_tracker = EnergyTracker()
-_last_statuses: dict[str, dict] = {}
+_last_refresh_error: str | None = None
 
 
 def _metric_labels(device_id: str) -> dict[str, str]:
@@ -110,7 +106,7 @@ class _ExporterStateCollector:
             labels=METRIC_LABELS,
         )
 
-        devices = _cloud_devices[:]
+        devices = device_store.get_devices()
         states = _energy_tracker.snapshot()
 
         for dev in devices:
@@ -142,43 +138,20 @@ REGISTRY.register(_ExporterStateCollector())
 _prometheus_app = make_wsgi_app(registry=REGISTRY)
 
 
-def _load_local_config() -> dict[str, dict]:
-    import os as _os
-
-    path = "switches.toml"
-    mtime = 0.0
-    try:
-        mtime = _os.path.getmtime(path)
-    except OSError:
-        return {}
-
-    global _local_config_mtime
-    if mtime == _local_config_mtime:
-        return _local_config
-
-    switches = device_config.load_switches(path)
-    _local_config_mtime = mtime
-    return {sw.get("id"): sw for sw in switches if sw.get("id")}
-
-
 def _discover_devices() -> list[dict]:
-    global _device_rooms
+    devices = api_client.get_devices()
     try:
-        devices = api_client.get_devices()
-    except Exception:
-        log.error("Device discovery failed", exc_info=True)
-        return []
-    try:
-        _device_rooms = api_client.get_device_room_map()
+        device_rooms = api_client.get_device_room_map()
     except Exception:
         log.error("Room mapping failed", exc_info=True)
-        _device_rooms = {}
-    return devices
+        device_rooms = {}
+    device_store.upsert_devices(devices, device_rooms)
+    return device_store.get_devices()
 
 
 def _resolve_room(dev_id: str) -> str:
-    """Return the effective room for a device (override > API > unknown)."""
-    return room_config.resolve_room(dev_id, _device_rooms.get(dev_id))
+    """Return the effective room for a device (override > cached discovery > unknown)."""
+    return room_config.resolve_room(dev_id, device_store.get_cached_room(dev_id))
 
 
 def _extract_dps_from_status(status: dict | None) -> dict | None:
@@ -228,29 +201,16 @@ def _mark_device_offline(device_id: str) -> None:
 
 
 def _poll_device(dev: dict) -> dict:
-    """Poll a single device and return a status dict."""
+    """Poll a single device locally and return a status dict."""
     dev_id = dev.get("id", "")
     name = dev.get("name", "unknown")
     room = _resolve_room(dev_id)
-    version = dev.get("version", "3.3")
-    local_cfg = _local_config.get(dev_id, {})
-    local_key = local_cfg.get("local_key")
-    ip = local_cfg.get("ip")
-
-    # Use the online flag from the discovery list if the cloud already knows
-    # the device is offline.
-    if dev.get("online") is False:
-        _mark_device_offline(dev_id)
-        return {
-            "id": dev_id,
-            "name": name,
-            "room": room,
-            "online": False,
-            "source": "—",
-        }
+    version = dev.get("version") or "3.3"
+    local_key = dev.get("local_key") or dev.get("key")
+    ip = dev.get("ip") or dev.get("last_ip")
 
     dps = None
-    source = "cloud"
+    source = "—"
 
     try:
         if local_key and ip:
@@ -263,13 +223,6 @@ def _poll_device(dev: dict) -> dict:
     except Exception:
         log.warning("Local poll failed", device_id=dev_id, exc_info=True)
 
-    if dps is None:
-        try:
-            cloud_status = api_client.get_device_status(dev_id)
-            dps = _extract_dps_from_status(cloud_status)
-        except Exception:
-            log.warning("Cloud poll failed", device_id=dev_id, exc_info=True)
-
     # Some offline devices return a non-empty status with all-null values.
     if dps and all(v is None for v in dps.values()):
         dps = None
@@ -281,7 +234,7 @@ def _poll_device(dev: dict) -> dict:
             "name": name,
             "room": room,
             "online": False,
-            "source": "—",
+            "source": source,
         }
 
     ONLINE.labels(**_metric_labels(dev_id)).set(1)
@@ -373,14 +326,8 @@ def _update_energy(device_id: str, raw: float | None) -> None:
 
 
 def _poll_all():
-    global _cloud_devices, _local_config
-    _local_config = _load_local_config()
-
-    if not _cloud_devices:
-        _cloud_devices = _discover_devices()
-        log.info("Discovered devices", count=len(_cloud_devices))
-
-    for dev in _cloud_devices:
+    devices = device_store.get_devices()
+    for dev in devices:
         dev_id = dev.get("id", "")
         try:
             status = _poll_device(dev)
@@ -393,20 +340,13 @@ def _poll_all():
                 "online": False,
                 "source": "—",
             }
-        _last_statuses[dev_id] = status
+        device_store.set_status(status)
 
 
 def _polling_loop():
-    global _cloud_devices
     log.info("Starting metrics polling loop", interval_seconds=POLL_INTERVAL)
-    last_discover = 0.0
     while True:
         try:
-            now = time.time()
-            if DISCOVER_INTERVAL > 0 and now - last_discover >= DISCOVER_INTERVAL:
-                _cloud_devices = _discover_devices()
-                log.info("Refreshed device list", count=len(_cloud_devices))
-                last_discover = now
             _poll_all()
         except Exception:
             log.error("Polling loop error", exc_info=True)
@@ -434,7 +374,7 @@ def index():
     """Render the dashboard skeleton; actual device data is fetched via /statuses."""
     devices = []
     rooms = set()
-    for dev in _cloud_devices:
+    for dev in device_store.get_devices():
         dev_id = dev.get("id", "")
         room = _resolve_room(dev_id)
         rooms.add(room)
@@ -464,13 +404,13 @@ def statuses_json():
     This serves the last values polled by the background thread.
     It does NOT block on fresh API calls.
     """
-    return jsonify(list(_last_statuses.values()))
+    return jsonify(device_store.get_statuses())
 
 
 @flask_app.route("/status/<device_id>")
 def status_single(device_id):
     """Return cached status for a single device."""
-    status = _last_statuses.get(device_id)
+    status = device_store.get_status(device_id)
     if status:
         return jsonify(status)
     return jsonify({"error": "Device not found or not yet polled"}), 404
@@ -478,35 +418,35 @@ def status_single(device_id):
 
 @flask_app.route("/refresh", methods=["POST"])
 def refresh():
-    global _cloud_devices
-    _cloud_devices = _discover_devices()
-    log.info("Manual device refresh", count=len(_cloud_devices))
-    return redirect(url_for("index"))
+    global _last_refresh_error
+    try:
+        devices = _discover_devices()
+        _last_refresh_error = None
+        log.info("Manual device refresh", count=len(devices))
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify({"success": True, "count": len(devices)})
+        return redirect(url_for("index"))
+    except Exception as exc:
+        _last_refresh_error = str(exc)
+        log.error("Manual device refresh failed", error=str(exc), exc_info=True)
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify({"success": False, "error": str(exc)}), 503
+        return Response(str(exc), status=503, mimetype="text/plain")
 
 
 def _get_switch_codes(device_id: str) -> list[str]:
-    """Return all switch DP codes a device exposes, ordered by preference."""
-    status = api_client.get_device_status(device_id)
-    if not status or not isinstance(status, dict):
-        return []
-    result = status.get("result", [])
-    codes: set[str] = set()
-    if isinstance(result, list):
-        for item in result:
-            if isinstance(item, dict) and "code" in item:
-                codes.add(item["code"])
-    elif isinstance(result, dict):
-        if isinstance(result.get("status"), list):
-            for item in result["status"]:
-                if isinstance(item, dict) and "code" in item:
-                    codes.add(item["code"])
-        else:
-            codes.update(result.keys())
-    ordered = []
+    """Return candidate switch DP codes without polling the cloud."""
+    status = device_store.get_status(device_id) or {}
+    codes = []
     for code in ("switch_1", "switch", "led_switch"):
-        if code in codes:
-            ordered.append(code)
-    return ordered
+        if code not in codes:
+            codes.append(code)
+    dps = status.get("dps") or {}
+    if isinstance(dps, dict):
+        for code in ("switch_1", "switch", "led_switch"):
+            if code in dps and code not in codes:
+                codes.append(code)
+    return codes
 
 
 def _try_toggle(device_id: str, state: bool) -> None:
@@ -556,7 +496,7 @@ def toggle_device(device_id):
 @flask_app.route("/poll/<device_id>")
 def poll_device(device_id):
     """Return cached status for a single device."""
-    status = _last_statuses.get(device_id)
+    status = device_store.get_status(device_id)
     if status:
         return jsonify(status)
     return jsonify({"error": "Device not found or not yet polled"}), 404
@@ -566,7 +506,7 @@ def poll_device(device_id):
 def rooms_page():
     """Room assignment management page."""
     devices_with_rooms = []
-    for dev in _cloud_devices:
+    for dev in device_store.get_devices():
         dev_id = dev.get("id", "")
         devices_with_rooms.append(
             {
@@ -651,6 +591,18 @@ def upload_rooms():
     room_config.set_rooms(mapping)
     log.info("Uploaded room overrides", count=len(mapping))
     return redirect(url_for("rooms_page"))
+
+
+@flask_app.route("/api/state")
+def api_state():
+    """Return exporter state including the last manual refresh error."""
+    return jsonify(
+        {
+            "last_refresh_error": _last_refresh_error,
+            "device_count": len(device_store.get_devices()),
+            "status_count": len(device_store.get_statuses()),
+        }
+    )
 
 
 @flask_app.route("/metrics")

@@ -219,10 +219,10 @@ def _extract_dps_from_status(status: dict | None) -> dict | None:
 
 
 def _mark_device_offline(device_id: str) -> None:
-    """Set online state to offline and clear live gauges to unknown."""
+    """Set online state to offline and force usage gauges to zero."""
     ONLINE.labels(**_metric_labels(device_id)).set(0)
-    POWER.labels(**_metric_labels(device_id)).set(float("nan"))
-    CURRENT.labels(**_metric_labels(device_id)).set(float("nan"))
+    POWER.labels(**_metric_labels(device_id)).set(0)
+    CURRENT.labels(**_metric_labels(device_id)).set(0)
     VOLTAGE.labels(**_metric_labels(device_id)).set(float("nan"))
     SWITCH.labels(**_metric_labels(device_id)).set(float("nan"))
 
@@ -286,30 +286,6 @@ def _poll_device(dev: dict) -> dict:
 
     ONLINE.labels(**_metric_labels(dev_id)).set(1)
 
-    raw_power = dps.get("cur_power") or dps.get("Power")
-    if raw_power is not None:
-        try:
-            POWER.labels(**_metric_labels(dev_id)).set(float(raw_power) / 10)
-        except (ValueError, TypeError):
-            pass
-
-    raw_current = dps.get("cur_current") or dps.get("Current")
-    if raw_current is not None:
-        try:
-            CURRENT.labels(**_metric_labels(dev_id)).set(float(raw_current) / 1000)
-        except (ValueError, TypeError):
-            pass
-
-    raw_voltage = dps.get("cur_voltage") or dps.get("Voltage")
-    if raw_voltage is not None:
-        try:
-            VOLTAGE.labels(**_metric_labels(dev_id)).set(float(raw_voltage) / 10)
-        except (ValueError, TypeError):
-            pass
-
-    raw_energy = _extract_power_dps(dps).get("energy")
-    _update_energy(dev_id, raw_energy)
-
     # Use key-in-dict check so a literal False value is not skipped by `or`.
     switch_state: bool | None = None
     for code in ("switch_1", "switch", "led_switch"):
@@ -317,10 +293,55 @@ def _poll_device(dev: dict) -> dict:
             switch_state = bool(dps[code])
             break
 
+    raw_power = dps.get("cur_power") or dps.get("Power")
+    power_value = None
+    if raw_power is not None:
+        try:
+            power_value = float(raw_power) / 10
+        except (ValueError, TypeError):
+            power_value = None
+    if power_value is not None:
+        POWER.labels(**_metric_labels(dev_id)).set(power_value)
+    elif switch_state is False:
+        POWER.labels(**_metric_labels(dev_id)).set(0)
+    else:
+        POWER.labels(**_metric_labels(dev_id)).set(float("nan"))
+
+    raw_current = dps.get("cur_current") or dps.get("Current")
+    current_value = None
+    if raw_current is not None:
+        try:
+            current_value = float(raw_current) / 1000
+        except (ValueError, TypeError):
+            current_value = None
+    if current_value is not None:
+        CURRENT.labels(**_metric_labels(dev_id)).set(current_value)
+    elif switch_state is False:
+        CURRENT.labels(**_metric_labels(dev_id)).set(0)
+    else:
+        CURRENT.labels(**_metric_labels(dev_id)).set(float("nan"))
+
+    raw_voltage = dps.get("cur_voltage") or dps.get("Voltage")
+    voltage_value = None
+    if raw_voltage is not None:
+        try:
+            voltage_value = float(raw_voltage) / 10
+        except (ValueError, TypeError):
+            voltage_value = None
+    if voltage_value is not None:
+        VOLTAGE.labels(**_metric_labels(dev_id)).set(voltage_value)
+    else:
+        VOLTAGE.labels(**_metric_labels(dev_id)).set(float("nan"))
+
+    raw_energy = _extract_power_dps(dps).get("energy")
+    _update_energy(dev_id, raw_energy)
+
     if switch_state is True:
         SWITCH.labels(**_metric_labels(dev_id)).set(1)
     elif switch_state is False:
         SWITCH.labels(**_metric_labels(dev_id)).set(0)
+    else:
+        SWITCH.labels(**_metric_labels(dev_id)).set(float("nan"))
 
     power_dps = _extract_power_dps(dps)
 

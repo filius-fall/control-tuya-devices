@@ -86,6 +86,14 @@ def _metric_labels(device_id: str) -> dict[str, str]:
     return {"device_id": device_id}
 
 
+def _remove_metric_labels(device_id: str) -> None:
+    for metric in (POWER, CURRENT, VOLTAGE, ONLINE, SWITCH):
+        try:
+            metric.remove(device_id)
+        except KeyError:
+            pass
+
+
 class _ExporterStateCollector:
     def collect(self):
         device_info = GaugeMetricFamily(
@@ -109,7 +117,8 @@ class _ExporterStateCollector:
             labels=METRIC_LABELS,
         )
 
-        devices = device_store.get_devices()
+        devices = device_store.get_enabled_devices()
+        enabled_ids = {dev.get("id", "") for dev in devices if dev.get("id")}
         states = _energy_tracker.snapshot()
 
         for dev in devices:
@@ -120,9 +129,7 @@ class _ExporterStateCollector:
                 [dev_id, dev.get("name", "unknown"), _resolve_room(dev_id)], 1
             )
 
-        for device_id in sorted(set(states) | {dev.get("id", "") for dev in devices}):
-            if not device_id:
-                continue
+        for device_id in sorted(enabled_ids):
             state = states.get(device_id)
             energy_total.add_metric([device_id], state.total_joules if state else 0.0)
             energy_resets.add_metric(
@@ -164,6 +171,87 @@ def _mark_device_offline(device_id: str) -> None:
     CURRENT.labels(**_metric_labels(device_id)).set(0)
     VOLTAGE.labels(**_metric_labels(device_id)).set(float("nan"))
     SWITCH.labels(**_metric_labels(device_id)).set(float("nan"))
+
+
+def _disabled_status(dev: dict) -> dict:
+    dev_id = dev.get("id", "")
+    return {
+        "id": dev_id,
+        "name": dev.get("name", "unknown"),
+        "room": _resolve_room(dev_id),
+        "enabled": False,
+        "online": False,
+        "source": "disabled",
+    }
+
+
+def _with_enabled(status: dict, dev: dict) -> dict:
+    status = dict(status)
+    status["enabled"] = bool(dev.get("enabled"))
+    return status
+
+
+def _dashboard_devices() -> list[dict]:
+    devices = []
+    for dev in device_store.get_devices():
+        dev_id = dev.get("id", "")
+        room = _resolve_room(dev_id)
+        devices.append(
+            {
+                "id": dev_id,
+                "name": dev.get("name", "unknown"),
+                "room": room,
+                "enabled": bool(dev.get("enabled")),
+                "created_at": dev.get("created_at"),
+                "updated_at": dev.get("updated_at"),
+            }
+        )
+    return devices
+
+
+def _dashboard_statuses() -> list[dict]:
+    cached = {row.get("id"): row for row in device_store.get_statuses() if row.get("id")}
+    rows = []
+    for dev in device_store.get_devices():
+        dev_id = dev.get("id", "")
+        if not dev.get("enabled"):
+            rows.append(_disabled_status(dev))
+            continue
+        status = cached.get(dev_id)
+        if status:
+            rows.append(_with_enabled(status, dev))
+        else:
+            rows.append(
+                {
+                    "id": dev_id,
+                    "name": dev.get("name", "unknown"),
+                    "room": _resolve_room(dev_id),
+                    "enabled": True,
+                    "online": False,
+                    "source": "—",
+                }
+            )
+    rows.sort(key=lambda item: ((item.get("name") or "").lower(), item.get("id") or ""))
+    return rows
+
+
+def _dashboard_status(device_id: str) -> dict | None:
+    dev = device_store.get_device(device_id)
+    if not dev:
+        return None
+    if not dev.get("enabled"):
+        return _disabled_status(dev)
+    status = device_store.get_status(device_id)
+    if status:
+        return _with_enabled(status, dev)
+    return {
+        "id": device_id,
+        "name": dev.get("name", "unknown"),
+        "room": _resolve_room(device_id),
+        "enabled": True,
+        "online": False,
+        "source": "—",
+    }
 
 
 def _maybe_refresh_local_credentials(device_id: str) -> dict | None:
@@ -225,13 +313,7 @@ def _poll_device(dev: dict) -> dict:
     source = "—"
 
     try:
-        if local_key and ip:
-            local_status = local_client.get_device_status_local(
-                dev_id, local_key, ip, version
-            )
-            if local_status and "dps" in local_status:
-                dps = local_status["dps"]
-                source = "local"
+        dps, source = _try_local_status(dev)
     except Exception:
         log.warning("Local poll failed", device_id=dev_id, exc_info=True)
 
@@ -355,25 +437,31 @@ def _update_energy(device_id: str, raw: float | None) -> None:
 def _poll_all():
     from . import webhook
 
-    devices = device_store.get_devices()
-    for dev in devices:
+    all_devices = device_store.get_devices()
+    enabled_statuses = []
+    for dev in all_devices:
         dev_id = dev.get("id", "")
+        if not dev.get("enabled"):
+            _remove_metric_labels(dev_id)
+            device_store.set_status(_disabled_status(dev))
+            continue
         try:
-            status = _poll_device(dev)
+            status = _with_enabled(_poll_device(dev), dev)
         except Exception:
             log.error("Poll failed", device=dev.get("name"), exc_info=True)
             status = {
                 "id": dev_id,
                 "name": dev.get("name", "unknown"),
                 "room": _resolve_room(dev_id),
+                "enabled": True,
                 "online": False,
                 "source": "—",
             }
         device_store.set_status(status)
+        enabled_statuses.append(status)
 
-    statuses = device_store.get_statuses()
-    if statuses:
-        stats = webhook.push_webhooks(statuses)
+    if enabled_statuses:
+        stats = webhook.push_webhooks(enabled_statuses)
         if stats["sent"] > 0 or stats["failed"] > 0:
             log.info("Webhook delivery", sent=stats["sent"], failed=stats["failed"])
 
@@ -407,28 +495,18 @@ flask_app = Flask(
 @flask_app.route("/")
 def index():
     """Render the dashboard skeleton; actual device data is fetched via /statuses."""
-    devices = []
-    rooms = set()
-    for dev in device_store.get_devices():
-        dev_id = dev.get("id", "")
-        room = _resolve_room(dev_id)
-        rooms.add(room)
-        devices.append(
-            {
-                "id": dev_id,
-                "name": dev.get("name", "unknown"),
-                "room": room,
-                "created_at": dev.get("created_at"),
-                "updated_at": dev.get("updated_at"),
-            }
-        )
+    devices = _dashboard_devices()
+    rooms = sorted({dev["room"] for dev in devices})
+    enabled_count = sum(1 for dev in devices if dev.get("enabled"))
 
     return render_template(
         "index.html",
         devices=devices,
-        rooms=sorted(rooms),
+        rooms=rooms,
         online_count=0,
         total_count=len(devices),
+        enabled_count=enabled_count,
+        all_disabled=bool(devices) and enabled_count == 0,
         poll_interval=POLL_INTERVAL,
         discover_interval=DISCOVER_INTERVAL,
     )
@@ -436,18 +514,14 @@ def index():
 
 @flask_app.route("/statuses")
 def statuses_json():
-    """Return cached device statuses as JSON for async dashboard updates.
-
-    This serves the last values polled by the background thread.
-    It does NOT block on fresh API calls.
-    """
-    return jsonify(device_store.get_statuses())
+    """Return dashboard statuses as JSON for async dashboard updates."""
+    return jsonify(_dashboard_statuses())
 
 
 @flask_app.route("/status/<device_id>")
 def status_single(device_id):
-    """Return cached status for a single device."""
-    status = device_store.get_status(device_id)
+    """Return dashboard status for a single device."""
+    status = _dashboard_status(device_id)
     if status:
         return jsonify(status)
     return jsonify({"error": "Device not found or not yet polled"}), 404
@@ -533,10 +607,53 @@ def toggle_device(device_id):
         return jsonify({"error": "Toggle failed"}), 500
 
 
+@flask_app.route("/devices/<device_id>/enabled", methods=["POST"])
+def set_device_enabled(device_id):
+    payload = request.get_json(force=True, silent=True) or {}
+    enabled = payload.get("enabled")
+    if enabled is None:
+        return jsonify({"error": "Missing enabled"}), 400
+    if not device_store.set_device_enabled(device_id, bool(enabled)):
+        return jsonify({"error": "Device not found"}), 404
+
+    dev = device_store.get_device(device_id)
+    if not dev:
+        return jsonify({"error": "Device not found"}), 404
+
+    if not dev.get("enabled"):
+        _remove_metric_labels(device_id)
+        device_store.set_status(_disabled_status(dev))
+    else:
+        try:
+            device_store.set_status(_with_enabled(_poll_device(dev), dev))
+        except Exception:
+            device_store.set_status(
+                {
+                    "id": device_id,
+                    "name": dev.get("name", "unknown"),
+                    "room": _resolve_room(device_id),
+                    "enabled": True,
+                    "online": False,
+                    "source": "—",
+                }
+            )
+
+    return jsonify({
+        "success": True,
+        "device": {
+            "id": device_id,
+            "enabled": bool(dev.get("enabled")),
+            "updated_at": dev.get("updated_at"),
+        },
+        "status": _dashboard_status(device_id),
+        "enabled_count": sum(1 for item in device_store.get_devices() if item.get("enabled")),
+    })
+
+
 @flask_app.route("/poll/<device_id>")
 def poll_device(device_id):
-    """Return cached status for a single device."""
-    status = device_store.get_status(device_id)
+    """Return dashboard status for a single device."""
+    status = _dashboard_status(device_id)
     if status:
         return jsonify(status)
     return jsonify({"error": "Device not found or not yet polled"}), 404
@@ -636,10 +753,12 @@ def upload_rooms():
 @flask_app.route("/api/state")
 def api_state():
     """Return exporter state including the last manual refresh error."""
+    devices = device_store.get_devices()
     return jsonify(
         {
             "last_refresh_error": _last_refresh_error,
-            "device_count": len(device_store.get_devices()),
+            "device_count": len(devices),
+            "enabled_count": sum(1 for dev in devices if dev.get("enabled")),
             "status_count": len(device_store.get_statuses()),
         }
     )

@@ -19,6 +19,7 @@ def _normalize_device_row(row) -> dict:
         room_name,
         version,
         online,
+        enabled,
         metadata_json,
         created_at,
         updated_at,
@@ -38,6 +39,7 @@ def _normalize_device_row(row) -> dict:
             "room": room_name,
             "version": version or data.get("version", "3.3"),
             "online": None if online is None else bool(online),
+            "enabled": bool(enabled),
             "created_at": created_at,
             "updated_at": updated_at,
         }
@@ -62,7 +64,7 @@ def upsert_devices(
             online = None if dev.get("online") is None else int(bool(dev.get("online")))
             existing = conn.execute(
                 """
-                SELECT name, room_name, version, online, metadata_json, created_at, updated_at
+                SELECT name, room_name, version, online, enabled, metadata_json, created_at, updated_at
                 FROM devices WHERE device_id = ?
                 """,
                 (device_id,),
@@ -70,6 +72,7 @@ def upsert_devices(
 
             if existing is None:
                 change_type = "inserted"
+                enabled = int(bool(dev.get("enabled", False)))
                 conn.execute(
                     """
                     INSERT INTO devices (
@@ -78,11 +81,12 @@ def upsert_devices(
                         room_name,
                         version,
                         online,
+                        enabled,
                         metadata_json,
                         created_at,
                         updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         device_id,
@@ -90,24 +94,28 @@ def upsert_devices(
                         room_name,
                         dev.get("version"),
                         online,
+                        enabled,
                         metadata_json,
                         now,
                         now,
                     ),
                 )
             else:
+                enabled = int(bool(dev.get("enabled", existing[4])))
                 previous = {
                     "name": existing[0],
                     "room_name": existing[1],
                     "version": existing[2],
                     "online": existing[3],
-                    "metadata_json": existing[4],
+                    "enabled": existing[4],
+                    "metadata_json": existing[5],
                 }
                 current = {
                     "name": dev.get("name", "unknown"),
                     "room_name": room_name,
                     "version": dev.get("version"),
                     "online": online,
+                    "enabled": enabled,
                     "metadata_json": metadata_json,
                 }
                 change_type = "updated" if previous != current else "unchanged"
@@ -118,6 +126,7 @@ def upsert_devices(
                         room_name = ?,
                         version = ?,
                         online = ?,
+                        enabled = ?,
                         metadata_json = ?,
                         updated_at = ?
                     WHERE device_id = ?
@@ -127,6 +136,7 @@ def upsert_devices(
                         current["room_name"],
                         current["version"],
                         current["online"],
+                        current["enabled"],
                         current["metadata_json"],
                         now,
                         device_id,
@@ -151,7 +161,7 @@ def get_devices() -> list[dict]:
     try:
         rows = conn.execute(
             """
-            SELECT device_id, name, room_name, version, online, metadata_json, created_at, updated_at
+            SELECT device_id, name, room_name, version, online, enabled, metadata_json, created_at, updated_at
             FROM devices
             ORDER BY lower(name), device_id
             """
@@ -167,7 +177,7 @@ def get_device(device_id: str) -> dict | None:
     try:
         row = conn.execute(
             """
-            SELECT device_id, name, room_name, version, online, metadata_json, created_at, updated_at
+            SELECT device_id, name, room_name, version, online, enabled, metadata_json, created_at, updated_at
             FROM devices WHERE device_id = ?
             """,
             (device_id,),
@@ -178,6 +188,23 @@ def get_device(device_id: str) -> dict | None:
     if not row:
         return None
     return _normalize_device_row(row)
+
+
+def set_device_enabled(device_id: str, enabled: bool) -> bool:
+    conn = state_db.connect()
+    try:
+        cur = conn.execute(
+            "UPDATE devices SET enabled = ?, updated_at = ? WHERE device_id = ?",
+            (int(bool(enabled)), _timestamp(), device_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_enabled_devices() -> list[dict]:
+    return [dev for dev in get_devices() if dev.get("enabled")]
 
 
 def get_cached_room(device_id: str) -> str | None:

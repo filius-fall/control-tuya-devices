@@ -31,6 +31,7 @@ class DeviceStoreTest(unittest.TestCase):
         self.assertIsNotNone(device)
         self.assertTrue(device["created_at"])
         self.assertTrue(device["updated_at"])
+        self.assertFalse(device["enabled"])
         self.assertEqual(device["created_at"], device["updated_at"])
         self.assertEqual(changes[0]["change"], "inserted")
 
@@ -97,6 +98,17 @@ class DeviceStoreTest(unittest.TestCase):
         self.assertEqual(len(devices), 1)
         self.assertTrue(devices[0]["created_at"])
         self.assertTrue(devices[0]["updated_at"])
+        self.assertFalse(devices[0]["enabled"])
+
+    def test_can_enable_device(self):
+        device_store.upsert_devices(
+            [{"id": "device-1", "name": "Desk", "version": "3.3", "online": True}]
+        )
+
+        updated = device_store.set_device_enabled("device-1", True)
+
+        self.assertTrue(updated)
+        self.assertTrue(device_store.get_device("device-1")["enabled"])
 
 
 if __name__ == "__main__":

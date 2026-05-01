@@ -60,6 +60,7 @@ def connect() -> sqlite3.Connection:
             room_name TEXT,
             version TEXT,
             online INTEGER,
+            enabled INTEGER NOT NULL DEFAULT 0,
             metadata_json TEXT NOT NULL DEFAULT '{}',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -85,6 +86,7 @@ def connect() -> sqlite3.Connection:
     )
     _ensure_column(conn, "devices", "created_at", "created_at TEXT")
     _ensure_column(conn, "devices", "updated_at", "updated_at TEXT")
+    _ensure_column(conn, "devices", "enabled", "enabled INTEGER NOT NULL DEFAULT 0")
     now = _timestamp()
     conn.execute(
         """
@@ -94,6 +96,13 @@ def connect() -> sqlite3.Connection:
         WHERE created_at IS NULL OR updated_at IS NULL
         """,
         (now, now),
+    )
+    conn.execute(
+        """
+        UPDATE devices
+        SET enabled = COALESCE(enabled, 0)
+        WHERE enabled IS NULL
+        """
     )
     conn.commit()
     return conn

@@ -42,6 +42,7 @@ class WebMetricsTest(unittest.TestCase):
             "version": "3.3",
             "key": "local-key",
             "last_ip": "192.168.1.10",
+            "enabled": True,
         }
         dev.update(overrides)
         return dev
@@ -98,7 +99,7 @@ class WebMetricsTest(unittest.TestCase):
         self.assertEqual(web.VOLTAGE.labels(device_id="device-1")._value.get(), 229.0)
 
     def test_poll_all_persists_statuses_in_sqlite_cache(self):
-        device_store.upsert_devices([self._dev()])
+        device_store.upsert_devices([self._dev(enabled=True)])
 
         with mock.patch.object(
             web.local_client,
@@ -134,6 +135,54 @@ class WebMetricsTest(unittest.TestCase):
         state = self.client.get("/api/state")
         self.assertEqual(state.status_code, 200)
         self.assertEqual(state.get_json()["last_refresh_error"], "quota exhausted")
+
+    def test_statuses_include_disabled_devices(self):
+        device_store.upsert_devices([
+            self._dev(id="device-1", enabled=False),
+            self._dev(id="device-2", name="Lamp", enabled=True),
+        ])
+        device_store.set_status({"id": "device-2", "name": "Lamp", "room": "unknown", "enabled": True, "online": True, "source": "local"})
+
+        response = self.client.get("/statuses")
+        data = response.get_json()
+
+        disabled = next(item for item in data if item["id"] == "device-1")
+        enabled = next(item for item in data if item["id"] == "device-2")
+        self.assertFalse(disabled["enabled"])
+        self.assertEqual(disabled["source"], "disabled")
+        self.assertTrue(enabled["enabled"])
+
+    def test_metrics_only_include_enabled_devices(self):
+        device_store.upsert_devices([
+            self._dev(id="device-1", enabled=True),
+            self._dev(id="device-2", name="Lamp", enabled=False),
+        ])
+        web._energy_tracker.update("device-1", 1.0)
+        web._energy_tracker.update("device-2", 2.0)
+
+        response = self.client.get("/metrics")
+        body = response.get_data(as_text=True)
+
+        self.assertIn('tuya_device_info{device="AC 1",device_id="device-1"', body)
+        self.assertNotIn('device_id="device-2"', body)
+
+    def test_can_toggle_device_enabled(self):
+        device_store.upsert_devices([self._dev(id="device-1", enabled=False)])
+        with mock.patch.object(
+            web.local_client,
+            "get_device_status_local",
+            return_value={"dps": {"switch_1": True, "cur_power": 1000, "cur_current": 500, "cur_voltage": 2300}},
+        ):
+            response = self.client.post(
+                "/devices/device-1/enabled",
+                json={"enabled": True},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["device"]["enabled"])
+        self.assertTrue(payload["status"]["enabled"])
+        self.assertTrue(device_store.get_device("device-1")["enabled"])
 
 
 if __name__ == "__main__":

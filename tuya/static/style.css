@@ -85,6 +85,23 @@ body {
   box-shadow: 0 0 8px var(--green-glow);
 }
 
+.enabled-pill {
+  color: var(--text-muted);
+}
+
+.warning-banner {
+  margin: 18px 32px 0;
+  padding: 14px 18px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.12);
+  color: #ffd89a;
+  border-radius: 10px;
+}
+
+.warning-banner[hidden] {
+  display: none;
+}
+
 .btn-refresh,
 .btn-metrics {
   font-family: 'JetBrains Mono', monospace;
@@ -175,6 +192,10 @@ body {
   border-color: var(--cyan);
 }
 
+.clear-btn {
+  margin-left: 4px;
+}
+
 .filter-select {
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
@@ -237,6 +258,11 @@ body {
   opacity: 0.6;
 }
 
+.device-card.disabled-card {
+  opacity: 0.78;
+  border-style: dashed;
+}
+
 .card-header {
   display: flex;
   align-items: flex-start;
@@ -270,6 +296,80 @@ body {
 
 .offline-dot {
   color: var(--red);
+}
+
+.card-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.enable-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.enable-toggle:hover {
+  border-color: var(--cyan);
+}
+
+.enable-toggle:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.toggle-track {
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--text-dim);
+  position: relative;
+}
+
+.toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.2s ease;
+}
+
+.enable-toggle.is-enabled {
+  color: var(--green);
+  border-color: rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.enable-toggle.is-enabled .toggle-track {
+  background: var(--green);
+}
+
+.enable-toggle.is-enabled .toggle-track::after {
+  transform: translateX(14px);
+}
+
+.enable-toggle.is-disabled {
+  color: var(--text-muted);
+}
+
+.toggle-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
 }
 
 .device-status {
@@ -308,7 +408,10 @@ body {
   color: var(--text-muted);
 }
 
-
+.badge.disabled {
+  background: rgba(6, 182, 212, 0.12);
+  color: var(--cyan);
+}
 
 /* Metrics */
 .metrics-grid {

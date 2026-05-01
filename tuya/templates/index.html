@@ -32,6 +32,9 @@
       <span class="dot"></span>
       <span id="online-count">0</span>/<span id="total-count">{{ total_count }}</span> online
     </div>
+    <div class="stat-pill enabled-pill">
+      <span id="enabled-count">{{ enabled_count }}</span>/<span id="device-count">{{ total_count }}</span> enabled
+    </div>
     <form method="post" action="{{ url_for('refresh') }}" class="refresh-form">
       <button type="submit" class="btn-refresh">Rediscover</button>
     </form>
@@ -39,6 +42,18 @@
     <a href="metrics" class="btn-metrics">metrics</a>
   </div>
 </header>
+
+{% if all_disabled %}
+<section id="all-disabled-banner" class="warning-banner">
+  <strong>No devices are enabled.</strong>
+  Enable at least one device to start collection and expose metrics.
+</section>
+{% else %}
+<section id="all-disabled-banner" class="warning-banner" hidden>
+  <strong>No devices are enabled.</strong>
+  Enable at least one device to start collection and expose metrics.
+</section>
+{% endif %}
 
 <section class="filters">
   <div class="filter-group">
@@ -48,16 +63,23 @@
     <select id="room-filter" class="filter-select">
       <option value="all">All rooms</option>
       {% for room in rooms %}
-      <option value="{{ room }}">{{ room }}</option>
+      <option value="{{ room | lower }}">{{ room }}</option>
       {% endfor %}
     </select>
   </div>
   <div class="filter-group toggles">
-    <button class="toggle-btn active" data-filter="all">All</button>
-    <button class="toggle-btn" data-filter="on">On</button>
-    <button class="toggle-btn" data-filter="off">Off</button>
-    <button class="toggle-btn" data-filter="online">Online</button>
-    <button class="toggle-btn" data-filter="offline">Offline</button>
+    <span class="filter-label">Collection</span>
+    <button class="toggle-btn active" data-filter-group="collection" data-filter="all">All</button>
+    <button class="toggle-btn" data-filter-group="collection" data-filter="enabled">Enabled</button>
+    <button class="toggle-btn" data-filter-group="collection" data-filter="disabled">Disabled</button>
+  </div>
+  <div class="filter-group toggles">
+    <span class="filter-label">State</span>
+    <button class="toggle-btn active" data-filter-group="state" data-filter="all">All</button>
+    <button class="toggle-btn" data-filter-group="state" data-filter="on">On</button>
+    <button class="toggle-btn" data-filter-group="state" data-filter="off">Off</button>
+    <button class="toggle-btn" data-filter-group="state" data-filter="online">Online</button>
+    <button class="toggle-btn" data-filter-group="state" data-filter="offline">Offline</button>
   </div>
   <div class="filter-group sort">
     <label for="sort">Sort</label>
@@ -68,27 +90,39 @@
       <option value="current">Current</option>
       <option value="voltage">Voltage</option>
       <option value="energy">Energy</option>
+      <option value="updatedAt">Updated</option>
+      <option value="createdAt">Added</option>
     </select>
     <button id="sort-dir" class="sort-dir" title="Toggle ascending/descending">↓</button>
+    <button id="clear-filters" class="toggle-btn clear-btn" type="button">Clear</button>
   </div>
 </section>
 
 <main class="dashboard" id="dashboard">
   {% for dev in devices %}
   <article
-    class="device-card"
+    class="device-card{% if not dev.enabled %} disabled-card{% endif %}"
     data-id="{{ dev.id }}"
     data-name="{{ dev.name | lower }}"
     data-room="{{ dev.room | lower }}"
     data-loading="true"
+    data-enabled="{{ 'true' if dev.enabled else 'false' }}"
+    data-created-at="{{ dev.created_at or '' }}"
+    data-updated-at="{{ dev.updated_at or '' }}"
   >
     <div class="card-header">
       <div class="card-title">
         <h2 class="device-name">{{ dev.name }}</h2>
         <span class="room-name">{{ dev.room }}</span>
       </div>
-      <div class="device-status">
-        <span class="badge offline">loading</span>
+      <div class="card-actions">
+        <button class="enable-toggle {{ 'is-enabled' if dev.enabled else 'is-disabled' }}" type="button" aria-pressed="{{ 'true' if dev.enabled else 'false' }}">
+          <span class="toggle-track"></span>
+          <span class="toggle-label">{{ 'Enabled' if dev.enabled else 'Disabled' }}</span>
+        </button>
+        <div class="device-status">
+          <span class="badge {% if dev.enabled %}offline{% else %}disabled{% endif %}">{% if dev.enabled %}loading{% else %}disabled{% endif %}</span>
+        </div>
       </div>
     </div>
 
@@ -109,6 +143,11 @@
         <span class="metric-label">Energy</span>
         <span class="metric-value energy">—</span>
       </div>
+    </div>
+
+    <div class="card-meta">
+      <div><span class="meta-label">Added</span><span class="meta-value js-created-at" title="{{ dev.created_at or '' }}">—</span></div>
+      <div><span class="meta-label">Updated</span><span class="meta-value js-updated-at" title="{{ dev.updated_at or '' }}">—</span></div>
     </div>
   </article>
   {% endfor %}
@@ -138,57 +177,137 @@
   let cards = Array.from(dashboard.querySelectorAll('.device-card'));
   const searchInput = document.getElementById('search');
   const roomFilter = document.getElementById('room-filter');
-  const toggleBtns = document.querySelectorAll('.toggle-btn');
+  const toggleBtns = document.querySelectorAll('.toggle-btn[data-filter]');
   const sortSelect = document.getElementById('sort');
   const sortDirBtn = document.getElementById('sort-dir');
+  const clearFiltersBtn = document.getElementById('clear-filters');
+  const allDisabledBanner = document.getElementById('all-disabled-banner');
+  const storageKey = 'tuya-dashboard-filters';
 
-  let activeFilter = 'all';
+  let collectionFilter = 'all';
+  let stateFilter = 'all';
   let sortKey = 'name';
   let sortAsc = true;
 
-  // -------------------------------------------------------------------------
-  // URL persistence
-  // -------------------------------------------------------------------------
-  function readFiltersFromURL() {
-    const params = new URLSearchParams(window.location.search);
-    const search = params.get('search') || '';
-    const room = params.get('room') || 'all';
-    const filter = params.get('filter') || 'all';
-    const sort = params.get('sort') || 'name';
-    const dir = params.get('dir') || 'asc';
+  function defaultState() {
+    return { search: '', room: 'all', collectionFilter: 'all', stateFilter: 'all', sort: 'name', dir: 'asc' };
+  }
 
-    searchInput.value = search;
-    roomFilter.value = room;
+  function loadSavedState() {
+    try {
+      return { ...defaultState(), ...(JSON.parse(localStorage.getItem(storageKey) || '{}')) };
+    } catch (e) {
+      return defaultState();
+    }
+  }
+
+  function saveState() {
+    const state = {
+      search: searchInput.value.trim(),
+      room: roomFilter.value,
+      collectionFilter,
+      stateFilter,
+      sort: sortKey,
+      dir: sortAsc ? 'asc' : 'desc'
+    };
+    localStorage.setItem(storageKey, JSON.stringify(state));
+
+    const params = new URLSearchParams();
+    if (state.search) params.set('search', state.search);
+    if (state.room !== 'all') params.set('room', state.room);
+    if (state.collectionFilter !== 'all') params.set('collection', state.collectionFilter);
+    if (state.stateFilter !== 'all') params.set('state', state.stateFilter);
+    if (state.sort !== 'name') params.set('sort', state.sort);
+    if (state.dir !== 'asc') params.set('dir', state.dir);
+    const qs = params.toString();
+    history.replaceState(null, '', qs ? '?' + qs : window.location.pathname);
+  }
+
+  function readFilters() {
+    const params = new URLSearchParams(window.location.search);
+    const saved = loadSavedState();
+    const state = {
+      search: params.get('search') ?? saved.search,
+      room: params.get('room') ?? saved.room,
+      collectionFilter: params.get('collection') ?? saved.collectionFilter,
+      stateFilter: params.get('state') ?? saved.stateFilter,
+      sort: params.get('sort') ?? saved.sort,
+      dir: params.get('dir') ?? saved.dir,
+    };
+
+    searchInput.value = state.search;
+    roomFilter.value = state.room;
+    collectionFilter = state.collectionFilter;
+    stateFilter = state.stateFilter;
+    sortKey = state.sort;
+    sortAsc = state.dir !== 'desc';
+    sortSelect.value = sortKey;
+    sortDirBtn.textContent = sortAsc ? '↓' : '↑';
 
     toggleBtns.forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.filter === filter);
-      if (btn.dataset.filter === filter) activeFilter = filter;
+      const group = btn.dataset.filterGroup;
+      const isActive = (group === 'collection' && btn.dataset.filter === collectionFilter)
+        || (group === 'state' && btn.dataset.filter === stateFilter);
+      btn.classList.toggle('active', isActive);
     });
-
-    sortSelect.value = sort;
-    sortKey = sort;
-
-    sortAsc = dir !== 'desc';
-    sortDirBtn.textContent = sortAsc ? '↓' : '↑';
   }
 
-  function writeFiltersToURL() {
-    const params = new URLSearchParams();
-    const search = searchInput.value.trim();
-    if (search) params.set('search', search);
-    if (roomFilter.value !== 'all') params.set('room', roomFilter.value);
-    if (activeFilter !== 'all') params.set('filter', activeFilter);
-    if (sortKey !== 'name') params.set('sort', sortKey);
-    if (!sortAsc) params.set('dir', 'desc');
-
-    const qs = params.toString();
-    const url = qs ? '?' + qs : window.location.pathname;
-    history.replaceState(null, '', url);
+  function formatLocalTime(value) {
+    if (!value) return '—';
+    const dt = new Date(value);
+    if (Number.isNaN(dt.getTime())) return value;
+    return new Intl.DateTimeFormat(undefined, {
+      year: 'numeric', month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    }).format(dt);
   }
 
-  // -------------------------------------------------------------------------
-  // Filtering & sorting
-  // -------------------------------------------------------------------------
+  function formatRelativeTime(value) {
+    if (!value) return '—';
+    const dt = new Date(value);
+    if (Number.isNaN(dt.getTime())) return value;
+    const diffSeconds = Math.round((dt.getTime() - Date.now()) / 1000);
+    const abs = Math.abs(diffSeconds);
+    const units = [
+      ['year', 31536000],
+      ['month', 2592000],
+      ['day', 86400],
+      ['hour', 3600],
+      ['minute', 60],
+      ['second', 1],
+    ];
+    for (const [unit, size] of units) {
+      if (abs >= size || unit === 'second') {
+        return new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }).format(Math.round(diffSeconds / size), unit);
+      }
+    }
+    return formatLocalTime(value);
+  }
+
+  function hydrateCardMeta(card) {
+    const createdEl = card.querySelector('.js-created-at');
+    const updatedEl = card.querySelector('.js-updated-at');
+    if (createdEl) {
+      createdEl.textContent = formatRelativeTime(card.dataset.createdAt);
+      createdEl.title = card.dataset.createdAt || '';
+    }
+    if (updatedEl) {
+      updatedEl.textContent = formatRelativeTime(card.dataset.updatedAt);
+      updatedEl.title = card.dataset.updatedAt || '';
+    }
+  }
+
+  function refreshBannerAndCounts() {
+    const enabledCards = cards.filter(c => c.dataset.enabled === 'true');
+    const visible = cards.filter(c => c.style.display !== 'none');
+    const visibleOnline = visible.filter(c => c.dataset.online === 'true');
+    document.getElementById('online-count').textContent = visibleOnline.length;
+    document.getElementById('total-count').textContent = visible.length;
+    document.getElementById('enabled-count').textContent = enabledCards.length;
+    document.getElementById('device-count').textContent = cards.length;
+    allDisabledBanner.hidden = enabledCards.length !== 0;
+  }
+
   function applyFilters() {
     const query = searchInput.value.trim().toLowerCase();
     const roomQuery = roomFilter.value;
@@ -198,70 +317,76 @@
       const room = card.dataset.room;
       const online = card.dataset.online === 'true';
       const on = card.dataset.on === 'true';
+      const enabled = card.dataset.enabled === 'true';
 
       let visible = true;
-
       if (query && !name.includes(query)) visible = false;
       if (roomQuery !== 'all' && room !== roomQuery) visible = false;
-      if (activeFilter === 'on' && !on) visible = false;
-      if (activeFilter === 'off' && on) visible = false;
-      if (activeFilter === 'online' && !online) visible = false;
-      if (activeFilter === 'offline' && online) visible = false;
-
+      if (collectionFilter === 'enabled' && !enabled) visible = false;
+      if (collectionFilter === 'disabled' && enabled) visible = false;
+      if (stateFilter === 'on' && !on) visible = false;
+      if (stateFilter === 'off' && on) visible = false;
+      if (stateFilter === 'online' && !online) visible = false;
+      if (stateFilter === 'offline' && online) visible = false;
       card.style.display = visible ? '' : 'none';
     });
 
-    updateCounts();
-    writeFiltersToURL();
+    refreshBannerAndCounts();
+    saveState();
   }
 
   function applySort() {
     const visibleCards = cards.filter(c => c.style.display !== 'none');
-
     visibleCards.sort((a, b) => {
+      const aEnabled = a.dataset.enabled === 'true';
+      const bEnabled = b.dataset.enabled === 'true';
+      if (aEnabled !== bEnabled) return aEnabled ? -1 : 1;
+
       let va = a.dataset[sortKey];
       let vb = b.dataset[sortKey];
-
       if (['power', 'current', 'voltage', 'energy'].includes(sortKey)) {
         va = parseFloat(va);
         vb = parseFloat(vb);
         if (isNaN(va)) va = -1;
         if (isNaN(vb)) vb = -1;
       }
-
+      if (sortKey === 'createdAt' || sortKey === 'updatedAt') {
+        va = new Date(va || 0).getTime();
+        vb = new Date(vb || 0).getTime();
+      }
       if (va < vb) return sortAsc ? -1 : 1;
       if (va > vb) return sortAsc ? 1 : -1;
       return 0;
     });
-
     visibleCards.forEach(card => dashboard.appendChild(card));
   }
 
-  function updateCounts() {
-    const visible = cards.filter(c => c.style.display !== 'none');
-    const visibleOnline = visible.filter(c => c.dataset.online === 'true');
-    document.getElementById('online-count').textContent = visibleOnline.length;
-    document.getElementById('total-count').textContent = visible.length;
-  }
-
-  // -------------------------------------------------------------------------
-  // Async data loading
-  // -------------------------------------------------------------------------
   function updateCard(card, dev) {
     card.dataset.loading = 'false';
-    card.dataset.online = String(dev.online);
+    card.dataset.online = String(Boolean(dev.online));
     card.dataset.on = String(dev.on);
+    card.dataset.enabled = String(Boolean(dev.enabled));
     card.dataset.power = (dev.power || '—').replace(' W', '').replace('—', '-1');
     card.dataset.current = (dev.current || '—').replace(' A', '').replace('—', '-1');
     card.dataset.voltage = (dev.voltage || '—').replace(' V', '').replace('—', '-1');
     card.dataset.energy = (dev.energy || '—').replace(' kWh', '').replace('—', '-1');
 
-    card.classList.toggle('offline', !dev.online);
+    card.classList.toggle('offline', !dev.online && dev.enabled !== false);
+    card.classList.toggle('disabled-card', dev.enabled === false);
+
+    const toggle = card.querySelector('.enable-toggle');
+    toggle.classList.toggle('is-enabled', dev.enabled !== false);
+    toggle.classList.toggle('is-disabled', dev.enabled === false);
+    toggle.setAttribute('aria-pressed', dev.enabled !== false ? 'true' : 'false');
+    toggle.querySelector('.toggle-label').textContent = dev.enabled !== false ? 'Enabled' : 'Disabled';
 
     const statusDiv = card.querySelector('.device-status');
     statusDiv.innerHTML = '';
-
-    if (dev.online) {
+    if (dev.enabled === false) {
+      statusDiv.appendChild(Object.assign(document.createElement('span'), {
+        className: 'badge disabled', textContent: 'disabled'
+      }));
+    } else if (dev.online) {
       statusDiv.appendChild(Object.assign(document.createElement('span'), {
         className: 'badge online', textContent: '● online'
       }));
@@ -271,18 +396,22 @@
       }));
     }
 
-    if (dev.on === true) {
-      statusDiv.appendChild(Object.assign(document.createElement('span'), {
-        className: 'badge on', textContent: 'ON'
-      }));
-    } else if (dev.on === false) {
-      statusDiv.appendChild(Object.assign(document.createElement('span'), {
-        className: 'badge off', textContent: 'off'
-      }));
+    if (dev.enabled !== false) {
+      if (dev.on === true) {
+        statusDiv.appendChild(Object.assign(document.createElement('span'), {
+          className: 'badge on', textContent: 'ON'
+        }));
+      } else if (dev.on === false) {
+        statusDiv.appendChild(Object.assign(document.createElement('span'), {
+          className: 'badge off', textContent: 'off'
+        }));
+      }
     }
 
     const metricValues = card.querySelectorAll('.metric-value');
-    const vals = [dev.power || '—', dev.current || '—', dev.voltage || '—', dev.energy || '—'];
+    const vals = dev.enabled === false
+      ? ['—', '—', '—', '—']
+      : [dev.power || '—', dev.current || '—', dev.voltage || '—', dev.energy || '—'];
     metricValues.forEach((el, i) => {
       el.textContent = vals[i];
       el.classList.toggle('active', i === 0 && vals[i] !== '—');
@@ -290,53 +419,72 @@
     });
   }
 
+  async function setCollectionEnabled(card, enabled) {
+    const button = card.querySelector('.enable-toggle');
+    button.disabled = true;
+    try {
+      const resp = await fetch(`devices/${card.dataset.id}/enabled`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ enabled })
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) throw new Error(data.error || 'Failed to update device');
+      if (data.device && data.device.updated_at) {
+        card.dataset.updatedAt = data.device.updated_at;
+      }
+      hydrateCardMeta(card);
+      if (data.status) updateCard(card, data.status);
+      applyFilters();
+      applySort();
+    } catch (e) {
+      alert(e.message || 'Failed to update device');
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   async function loadStatuses() {
     try {
       const resp = await fetch('statuses');
       const data = await resp.json();
       if (!Array.isArray(data)) return;
-
       data.forEach(dev => {
         const card = cards.find(c => c.dataset.id === dev.id);
         if (card) updateCard(card, dev);
       });
-
       applyFilters();
       applySort();
 
-      // For any cards still loading, fetch individually so they populate
-      // independently without waiting for the next bulk poll.
       const loadingCards = cards.filter(c => c.dataset.loading === 'true');
-      await Promise.all(
-        loadingCards.map(async (card) => {
-          try {
-            const r = await fetch('status/' + card.dataset.id);
-            if (!r.ok) return;
-            const dev = await r.json();
-            updateCard(card, dev);
-            applyFilters();
-            applySort();
-          } catch (e) {
-            // silently skip; will retry on next bulk poll
-          }
-        })
-      );
-    } catch (e) {
-      // silently retry next poll
-    }
+      await Promise.all(loadingCards.map(async (card) => {
+        try {
+          const r = await fetch('status/' + card.dataset.id);
+          if (!r.ok) return;
+          const dev = await r.json();
+          updateCard(card, dev);
+        } catch (e) {}
+      }));
+      applyFilters();
+      applySort();
+    } catch (e) {}
   }
 
-  // -------------------------------------------------------------------------
-  // Event listeners
-  // -------------------------------------------------------------------------
   searchInput.addEventListener('input', () => { applyFilters(); applySort(); });
   roomFilter.addEventListener('change', () => { applyFilters(); applySort(); });
 
   toggleBtns.forEach(btn => {
     btn.addEventListener('click', () => {
-      toggleBtns.forEach(b => b.classList.remove('active'));
+      const group = btn.dataset.filterGroup;
+      toggleBtns.forEach(b => {
+        if (b.dataset.filterGroup === group) b.classList.remove('active');
+      });
       btn.classList.add('active');
-      activeFilter = btn.dataset.filter;
+      if (group === 'collection') {
+        collectionFilter = btn.dataset.filter;
+      } else if (group === 'state') {
+        stateFilter = btn.dataset.filter;
+      }
       applyFilters();
       applySort();
     });
@@ -345,19 +493,31 @@
   sortSelect.addEventListener('change', () => {
     sortKey = sortSelect.value;
     applySort();
-    writeFiltersToURL();
+    saveState();
   });
 
   sortDirBtn.addEventListener('click', () => {
     sortAsc = !sortAsc;
     sortDirBtn.textContent = sortAsc ? '↓' : '↑';
     applySort();
-    writeFiltersToURL();
+    saveState();
   });
 
-  // -------------------------------------------------------------------------
-  // Toggle modal
-  // -------------------------------------------------------------------------
+  clearFiltersBtn.addEventListener('click', () => {
+    localStorage.removeItem(storageKey);
+    searchInput.value = '';
+    roomFilter.value = 'all';
+    collectionFilter = 'all';
+    stateFilter = 'all';
+    sortKey = 'name';
+    sortAsc = true;
+    sortSelect.value = sortKey;
+    sortDirBtn.textContent = '↓';
+    toggleBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.filter === 'all'));
+    applyFilters();
+    applySort();
+  });
+
   const modal = document.getElementById('toggle-modal');
   const modalName = document.getElementById('modal-device-name');
   const modalState = document.getElementById('modal-current-state');
@@ -368,7 +528,7 @@
   let currentDeviceId = null;
 
   function openModal(card) {
-    if (card.dataset.online !== 'true') return;
+    if (card.dataset.enabled !== 'true' || card.dataset.online !== 'true') return;
     currentDeviceId = card.dataset.id;
     modalName.textContent = card.querySelector('.device-name').textContent;
     const isOn = card.dataset.on === 'true';
@@ -391,7 +551,7 @@
       const resp = await fetch(`toggle/${currentDeviceId}`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({state: state})
+        body: JSON.stringify({state})
       });
       const data = await resp.json();
       if (data.success) {
@@ -418,7 +578,15 @@
   }
 
   cards.forEach(card => {
-    card.addEventListener('click', () => openModal(card));
+    hydrateCardMeta(card);
+    card.addEventListener('click', (event) => {
+      if (event.target.closest('.enable-toggle')) return;
+      openModal(card);
+    });
+    card.querySelector('.enable-toggle').addEventListener('click', (event) => {
+      event.stopPropagation();
+      setCollectionEnabled(card, card.dataset.enabled !== 'true');
+    });
   });
 
   btnOn.addEventListener('click', () => doToggle(true));
@@ -428,24 +596,18 @@
     if (e.target === modal) closeModal();
   });
 
-  // -------------------------------------------------------------------------
-  // PWA service worker
-  // -------------------------------------------------------------------------
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register(
-      '{{ url_for("static", filename="sw.js") }}',
-      { scope: '.' }
-    );
+    navigator.serviceWorker.register('{{ url_for("static", filename="sw.js") }}', { scope: '.' });
   }
 
-  // -------------------------------------------------------------------------
-  // Init
-  // -------------------------------------------------------------------------
-  readFiltersFromURL();
+  readFilters();
   applyFilters();
   applySort();
   loadStatuses();
-  setInterval(loadStatuses, POLL_MS);
+  setInterval(() => {
+    cards.forEach(hydrateCardMeta);
+    loadStatuses();
+  }, POLL_MS);
 })();
 </script>
 

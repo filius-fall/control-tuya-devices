@@ -27,7 +27,7 @@ def scan_local_network(timeout: float = 3.0) -> dict[str, dict]:
         return {}
 
 
-def refresh_devices(scan: bool = True) -> list[dict]:
+def refresh_devices(scan: bool = True) -> tuple[list[dict], list[dict[str, str]]]:
     """Fetch devices from cloud, enrich with LAN scan results, and persist to DB."""
     cloud_devices = api_client.get_devices()
     room_map = api_client.get_device_room_map()
@@ -43,6 +43,6 @@ def refresh_devices(scan: bool = True) -> list[dict]:
             item["version"] = local[dev_id].get("version", item.get("version", "3.3"))
         merged.append(item)
 
-    device_store.upsert_devices(merged, room_map)
+    changes = device_store.upsert_devices(merged, room_map)
     log.info("Refreshed devices into database", count=len(merged), scanned=bool(scan))
-    return device_store.get_devices()
+    return device_store.get_devices(), changes

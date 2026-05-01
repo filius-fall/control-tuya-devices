@@ -2,8 +2,21 @@
 
 import os
 import sqlite3
+from datetime import datetime, timezone
 
 DEFAULT_DB_PATH = "tuya.db"
+
+
+def _timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    columns = {
+        row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
 
 
 def get_db_path() -> str:
@@ -47,7 +60,9 @@ def connect() -> sqlite3.Connection:
             room_name TEXT,
             version TEXT,
             online INTEGER,
+            enabled INTEGER NOT NULL DEFAULT 0,
             metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
         """
@@ -67,6 +82,26 @@ def connect() -> sqlite3.Connection:
             device_id TEXT PRIMARY KEY,
             state_json TEXT NOT NULL
         )
+        """
+    )
+    _ensure_column(conn, "devices", "created_at", "created_at TEXT")
+    _ensure_column(conn, "devices", "updated_at", "updated_at TEXT")
+    _ensure_column(conn, "devices", "enabled", "enabled INTEGER NOT NULL DEFAULT 0")
+    now = _timestamp()
+    conn.execute(
+        """
+        UPDATE devices
+        SET created_at = COALESCE(created_at, ?),
+            updated_at = COALESCE(updated_at, ?)
+        WHERE created_at IS NULL OR updated_at IS NULL
+        """,
+        (now, now),
+    )
+    conn.execute(
+        """
+        UPDATE devices
+        SET enabled = COALESCE(enabled, 0)
+        WHERE enabled IS NULL
         """
     )
     conn.commit()

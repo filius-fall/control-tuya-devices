@@ -150,6 +150,14 @@ def get_device_status(device_id: str):
     return status
 
 
+def get_device_metadata(device_id: str) -> dict | None:
+    """Return one device metadata row from the Tuya Cloud device list."""
+    for dev in get_devices():
+        if dev.get("id") == device_id:
+            return dev
+    return None
+
+
 def get_device_properties(device_id: str):
     """Return the properties/specification for a single device."""
 

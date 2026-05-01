@@ -50,6 +50,7 @@ log = logger.logs
 
 POLL_INTERVAL = int(os.getenv("TUYA_POLL_INTERVAL", "30"))
 DISCOVER_INTERVAL = int(os.getenv("TUYA_DISCOVER_INTERVAL", "0"))
+LOCAL_KEY_REFRESH_COOLDOWN = int(os.getenv("TUYA_KEY_REFRESH_COOLDOWN", "3600"))
 
 REGISTRY = CollectorRegistry()
 METRIC_LABELS = ["device_id"]
@@ -78,6 +79,7 @@ SWITCH = Gauge(
 
 _energy_tracker = EnergyTracker()
 _last_refresh_error: str | None = None
+_last_key_refresh_attempts: dict[str, float] = {}
 
 
 def _metric_labels(device_id: str) -> dict[str, str]:
@@ -162,6 +164,52 @@ def _mark_device_offline(device_id: str) -> None:
     CURRENT.labels(**_metric_labels(device_id)).set(0)
     VOLTAGE.labels(**_metric_labels(device_id)).set(float("nan"))
     SWITCH.labels(**_metric_labels(device_id)).set(float("nan"))
+
+
+def _maybe_refresh_local_credentials(device_id: str) -> dict | None:
+    now = time.time()
+    last_attempt = _last_key_refresh_attempts.get(device_id, 0.0)
+    if now - last_attempt < LOCAL_KEY_REFRESH_COOLDOWN:
+        return None
+
+    _last_key_refresh_attempts[device_id] = now
+    try:
+        refreshed = api_client.get_device_metadata(device_id)
+        if not refreshed:
+            log.warning("Local credential refresh found no matching device", device_id=device_id)
+            return None
+        changes = device_store.upsert_devices([refreshed])
+        log.info("Refreshed local credentials for device", device_id=device_id, changes=changes)
+        return device_store.get_device(device_id)
+    except Exception:
+        log.warning("Local credential refresh failed", device_id=device_id, exc_info=True)
+        return None
+
+
+def _try_local_status(dev: dict) -> tuple[dict | None, str]:
+    dev_id = dev.get("id", "")
+    version = dev.get("version") or "3.3"
+    local_key = dev.get("local_key") or dev.get("key")
+    ip = dev.get("ip") or dev.get("last_ip")
+
+    if local_key and ip:
+        local_status = local_client.get_device_status_local(dev_id, local_key, ip, version)
+        if local_status and "dps" in local_status:
+            return local_status["dps"], "local"
+
+    refreshed = _maybe_refresh_local_credentials(dev_id)
+    if not refreshed:
+        return None, "—"
+
+    version = refreshed.get("version") or "3.3"
+    local_key = refreshed.get("local_key") or refreshed.get("key")
+    ip = refreshed.get("ip") or refreshed.get("last_ip")
+    if local_key and ip:
+        local_status = local_client.get_device_status_local(dev_id, local_key, ip, version)
+        if local_status and "dps" in local_status:
+            return local_status["dps"], "local"
+
+    return None, "—"
 
 
 def _poll_device(dev: dict) -> dict:

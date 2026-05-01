@@ -218,6 +218,30 @@ def get_cached_room(device_id: str) -> str | None:
         conn.close()
 
 
+def update_device_network_info(
+    device_id: str, ip: str | None = None, version: str | None = None
+) -> bool:
+    """Update IP and/or version for a cached device and bump updated_at."""
+    now = _timestamp()
+    conn = state_db.connect()
+    try:
+        fields = ["updated_at = ?"]
+        params: list = [now]
+        if ip is not None:
+            fields.append("ip = ?")
+            params.append(ip)
+        if version is not None:
+            fields.append("version = ?")
+            params.append(version)
+        params.append(device_id)
+        sql = f"UPDATE devices SET {', '.join(fields)} WHERE device_id = ?"
+        cur = conn.execute(sql, params)
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
 def set_status(status: dict) -> None:
     device_id = str(status.get("id") or "").strip()
     if not device_id:

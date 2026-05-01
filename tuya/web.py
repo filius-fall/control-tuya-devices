@@ -36,6 +36,7 @@ from . import api_client
 from . import local_client
 from . import room_config
 from . import device_store
+from . import setup as setup_module
 from .energy_tracker import EnergyTracker
 from .outage import track_outage
 from .rich_output import (
@@ -80,6 +81,7 @@ SWITCH = Gauge(
 _energy_tracker = EnergyTracker()
 _last_refresh_error: str | None = None
 _last_key_refresh_attempts: dict[str, float] = {}
+_discovery_lock = threading.Lock()
 
 
 def _metric_labels(device_id: str) -> dict[str, str]:
@@ -466,6 +468,33 @@ def _poll_all():
             log.info("Webhook delivery", sent=stats["sent"], failed=stats["failed"])
 
 
+def _discovery_loop():
+    log.info("Starting LAN discovery loop", interval_seconds=DISCOVER_INTERVAL)
+    while True:
+        time.sleep(DISCOVER_INTERVAL)
+        if not _discovery_lock.acquire(blocking=False):
+            log.debug("Skipping LAN discovery: previous scan still running")
+            continue
+        try:
+            found = setup_module.scan_local_network(timeout=2.0)
+            if not found:
+                log.debug("LAN discovery found no devices")
+                continue
+            updated = 0
+            for dev_id, info in found.items():
+                ip = info.get("ip")
+                version = info.get("version")
+                if ip or version:
+                    if device_store.update_device_network_info(dev_id, ip=ip, version=version):
+                        updated += 1
+            if updated:
+                log.info("LAN discovery updated devices", updated=updated, found=len(found))
+        except Exception:
+            log.error("LAN discovery loop error", exc_info=True)
+        finally:
+            _discovery_lock.release()
+
+
 def _polling_loop():
     log.info("Starting metrics polling loop", interval_seconds=POLL_INTERVAL)
     while True:
@@ -477,9 +506,14 @@ def _polling_loop():
 
 
 _polling_thread = None
+_discovery_thread = None
 if os.getenv("TUYA_DISABLE_POLL_THREAD", "").lower() not in ("1", "true", "yes"):
     _polling_thread = threading.Thread(target=_polling_loop, daemon=True)
     _polling_thread.start()
+
+if DISCOVER_INTERVAL > 0:
+    _discovery_thread = threading.Thread(target=_discovery_loop, daemon=True)
+    _discovery_thread.start()
 
 # ---------------------------------------------------------------------------
 # Flask app

@@ -68,13 +68,18 @@
     </select>
   </div>
   <div class="filter-group toggles">
-    <button class="toggle-btn active" data-filter="all">All</button>
-    <button class="toggle-btn" data-filter="enabled">Enabled</button>
-    <button class="toggle-btn" data-filter="disabled">Disabled</button>
-    <button class="toggle-btn" data-filter="on">On</button>
-    <button class="toggle-btn" data-filter="off">Off</button>
-    <button class="toggle-btn" data-filter="online">Online</button>
-    <button class="toggle-btn" data-filter="offline">Offline</button>
+    <span class="filter-label">Collection</span>
+    <button class="toggle-btn active" data-filter-group="collection" data-filter="all">All</button>
+    <button class="toggle-btn" data-filter-group="collection" data-filter="enabled">Enabled</button>
+    <button class="toggle-btn" data-filter-group="collection" data-filter="disabled">Disabled</button>
+  </div>
+  <div class="filter-group toggles">
+    <span class="filter-label">State</span>
+    <button class="toggle-btn active" data-filter-group="state" data-filter="all">All</button>
+    <button class="toggle-btn" data-filter-group="state" data-filter="on">On</button>
+    <button class="toggle-btn" data-filter-group="state" data-filter="off">Off</button>
+    <button class="toggle-btn" data-filter-group="state" data-filter="online">Online</button>
+    <button class="toggle-btn" data-filter-group="state" data-filter="offline">Offline</button>
   </div>
   <div class="filter-group sort">
     <label for="sort">Sort</label>
@@ -179,12 +184,13 @@
   const allDisabledBanner = document.getElementById('all-disabled-banner');
   const storageKey = 'tuya-dashboard-filters';
 
-  let activeFilter = 'all';
+  let collectionFilter = 'all';
+  let stateFilter = 'all';
   let sortKey = 'name';
   let sortAsc = true;
 
   function defaultState() {
-    return { search: '', room: 'all', filter: 'all', sort: 'name', dir: 'asc' };
+    return { search: '', room: 'all', collectionFilter: 'all', stateFilter: 'all', sort: 'name', dir: 'asc' };
   }
 
   function loadSavedState() {
@@ -199,7 +205,8 @@
     const state = {
       search: searchInput.value.trim(),
       room: roomFilter.value,
-      filter: activeFilter,
+      collectionFilter,
+      stateFilter,
       sort: sortKey,
       dir: sortAsc ? 'asc' : 'desc'
     };
@@ -208,7 +215,8 @@
     const params = new URLSearchParams();
     if (state.search) params.set('search', state.search);
     if (state.room !== 'all') params.set('room', state.room);
-    if (state.filter !== 'all') params.set('filter', state.filter);
+    if (state.collectionFilter !== 'all') params.set('collection', state.collectionFilter);
+    if (state.stateFilter !== 'all') params.set('state', state.stateFilter);
     if (state.sort !== 'name') params.set('sort', state.sort);
     if (state.dir !== 'asc') params.set('dir', state.dir);
     const qs = params.toString();
@@ -221,21 +229,26 @@
     const state = {
       search: params.get('search') ?? saved.search,
       room: params.get('room') ?? saved.room,
-      filter: params.get('filter') ?? saved.filter,
+      collectionFilter: params.get('collection') ?? saved.collectionFilter,
+      stateFilter: params.get('state') ?? saved.stateFilter,
       sort: params.get('sort') ?? saved.sort,
       dir: params.get('dir') ?? saved.dir,
     };
 
     searchInput.value = state.search;
     roomFilter.value = state.room;
-    activeFilter = state.filter;
+    collectionFilter = state.collectionFilter;
+    stateFilter = state.stateFilter;
     sortKey = state.sort;
     sortAsc = state.dir !== 'desc';
     sortSelect.value = sortKey;
     sortDirBtn.textContent = sortAsc ? '↓' : '↑';
 
     toggleBtns.forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.filter === activeFilter);
+      const group = btn.dataset.filterGroup;
+      const isActive = (group === 'collection' && btn.dataset.filter === collectionFilter)
+        || (group === 'state' && btn.dataset.filter === stateFilter);
+      btn.classList.toggle('active', isActive);
     });
   }
 
@@ -309,12 +322,12 @@
       let visible = true;
       if (query && !name.includes(query)) visible = false;
       if (roomQuery !== 'all' && room !== roomQuery) visible = false;
-      if (activeFilter === 'enabled' && !enabled) visible = false;
-      if (activeFilter === 'disabled' && enabled) visible = false;
-      if (activeFilter === 'on' && !on) visible = false;
-      if (activeFilter === 'off' && on) visible = false;
-      if (activeFilter === 'online' && !online) visible = false;
-      if (activeFilter === 'offline' && online) visible = false;
+      if (collectionFilter === 'enabled' && !enabled) visible = false;
+      if (collectionFilter === 'disabled' && enabled) visible = false;
+      if (stateFilter === 'on' && !on) visible = false;
+      if (stateFilter === 'off' && on) visible = false;
+      if (stateFilter === 'online' && !online) visible = false;
+      if (stateFilter === 'offline' && online) visible = false;
       card.style.display = visible ? '' : 'none';
     });
 
@@ -462,9 +475,16 @@
 
   toggleBtns.forEach(btn => {
     btn.addEventListener('click', () => {
-      toggleBtns.forEach(b => b.classList.remove('active'));
+      const group = btn.dataset.filterGroup;
+      toggleBtns.forEach(b => {
+        if (b.dataset.filterGroup === group) b.classList.remove('active');
+      });
       btn.classList.add('active');
-      activeFilter = btn.dataset.filter;
+      if (group === 'collection') {
+        collectionFilter = btn.dataset.filter;
+      } else if (group === 'state') {
+        stateFilter = btn.dataset.filter;
+      }
       applyFilters();
       applySort();
     });
@@ -487,7 +507,8 @@
     localStorage.removeItem(storageKey);
     searchInput.value = '';
     roomFilter.value = 'all';
-    activeFilter = 'all';
+    collectionFilter = 'all';
+    stateFilter = 'all';
     sortKey = 'name';
     sortAsc = true;
     sortSelect.value = sortKey;

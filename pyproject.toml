@@ -1,7 +1,7 @@
 [project]
 name = "control-tuya-devices"
-version = "0.1.0"
-description = "Control and inspect Tuya devices using the Tuya cloud API"
+version = "0.2.0"
+description = "Monitor Tuya smart device power usage and export to Prometheus"
 authors = [
     { name = "filius-fall", email = "sreeram596@gmail.com" }
 ]
@@ -9,21 +9,32 @@ dependencies = [
     "python-dotenv>=1.0.1",
     "structlog>=24.4.0",
     "tinytuya>=1.15.1",
+    "prometheus-client>=0.20.0",
+    "rich>=13.0",
+    "textual>=0.50",
+    "gunicorn>=22.0",
+    "flask>=3.0",
     "requests>=2.31.0",
 ]
 readme = "README.md"
-requires-python = ">= 3.8"
+requires-python = ">= 3.10"
+
+[project.scripts]
+tuya = "tuya.cli:main"
+tuya-top = "tuya.top:run_top"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.rye]
-managed = true
-dev-dependencies = []
 
 [tool.hatch.metadata]
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["tuya"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4.0",
+]

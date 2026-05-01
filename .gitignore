@@ -1,10 +1,37 @@
-env/
-.venv/
-*.log
-.env
-*__pycache__*
-*.pyc
-*.lock
-*.json
-*/__pycache__/*
+# Python
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.env
+.venv/
+env/
+venv/
+
+# Data & logs
+data/
+logs/
+*.log
+*.json
+!tuya/static/*.json
+
+# User config / local state
+switches.toml
+tuya.db
+rooms.db
+
+# Lock files
+*.lock
+uv.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store

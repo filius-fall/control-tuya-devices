@@ -4,34 +4,42 @@ import sys
 import os
 
 logger = logging.getLogger("tuya")
-logger.setLevel(logging.INFO)
 logger.propagate = False
 
-os.makedirs("logs", exist_ok=True)
+# Allow forcing file logging via env var; default to stdout for systemd.
+_LOG_TO_FILE = os.getenv("TUYA_LOG_FILE", "").lower() in ("1", "true", "yes")
+_LOG_FORMAT = os.getenv("TUYA_LOG_FORMAT", "json").lower()
+_LOG_LEVEL = os.getenv("TUYA_LOG_LEVEL", "INFO").upper()
+_log_level = getattr(logging, _LOG_LEVEL, logging.INFO)
+
+logger.setLevel(_log_level)
 
 if not logger.handlers:
-    file_handler = logging.FileHandler("logs/app.log")
-    file_handler.setLevel(logging.INFO)
+    if _LOG_TO_FILE:
+        os.makedirs("logs", exist_ok=True)
+        handler = logging.FileHandler("logs/app.log")
+    else:
+        handler = logging.StreamHandler(sys.stdout)
 
-    stdout_handler = logging.StreamHandler(sys.stdout)
-    stdout_handler.setLevel(logging.INFO)
+    handler.setLevel(_log_level)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
 
-    formatter = logging.Formatter("%(message)s")
-    file_handler.setFormatter(formatter)
-    stdout_handler.setFormatter(formatter)
+_processors = [
+    structlog.processors.StackInfoRenderer(),
+    structlog.processors.format_exc_info,
+    structlog.processors.TimeStamper(fmt="iso"),
+]
 
-    logger.addHandler(file_handler)
-    logger.addHandler(stdout_handler)
+if _LOG_FORMAT == "console":
+    _processors.append(structlog.dev.ConsoleRenderer(colors=sys.stderr.isatty()))
+else:
+    _processors.append(structlog.processors.JSONRenderer())
 
 structlog.configure(
-    processors=[
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.JSONRenderer(),
-    ],
+    processors=_processors,
     context_class=dict,
     logger_factory=structlog.stdlib.LoggerFactory(),
-    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+    wrapper_class=structlog.make_filtering_bound_logger(_log_level),
 )
 logs = structlog.get_logger("tuya")

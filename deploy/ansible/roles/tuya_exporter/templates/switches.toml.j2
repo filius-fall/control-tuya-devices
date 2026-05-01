@@ -1,0 +1,12 @@
+# Managed by Ansible — do not edit manually
+# Run 'tuya setup' on the exporter host to regenerate.
+
+{% for switch in tuya_switches | default([]) %}
+[[switch]]
+id = "{{ switch.id }}"
+name = "{{ switch.name }}"
+local_key = "{{ switch.local_key }}"
+ip = "{{ switch.ip | default('') }}"
+version = "{{ switch.version | default('3.3') }}"
+
+{% endfor %}

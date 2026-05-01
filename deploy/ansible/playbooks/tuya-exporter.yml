@@ -1,0 +1,16 @@
+---
+- name: Deploy Tuya Prometheus Exporter
+  hosts: monitoring_server
+  become: true
+  roles:
+    - role: tuya_exporter
+      vars:
+        tuya_client_key: "{{ vault_tuya_client_key }}"
+        tuya_client_secret: "{{ vault_tuya_client_secret }}"
+        tuya_api_region: "{{ vault_tuya_api_region | default('in') }}"
+        # Optional: pre-populate switches.toml via ansible vars
+        # tuya_switches:
+        #   - id: bf...
+        #     name: Living Room
+        #     local_key: a1b2...
+        #     ip: 192.168.1.45

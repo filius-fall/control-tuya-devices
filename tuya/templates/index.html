@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0a0814">
+<meta name="description" content="Tuya Power Monitor — Smart device dashboard">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tuya">
+<title>Tuya Control Panel</title>
+<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='icon.svg') }}">
+<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icon.svg') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<style>
+.device-card[data-loading="true"] .metric-value { color: var(--text-dim); animation: pulse 1.5s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.8; } }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="brand">
+    <h1>Tuya</h1>
+    <span class="tagline">Power Monitor</span>
+  </div>
+  <div class="meta">
+    <div class="stat-pill online">
+      <span class="dot"></span>
+      <span id="online-count">0</span>/<span id="total-count">{{ total_count }}</span> online
+    </div>
+    <form method="post" action="{{ url_for('refresh') }}" class="refresh-form">
+      <button type="submit" class="btn-refresh">Rediscover</button>
+    </form>
+    <a href="{{ url_for('rooms_page') }}" class="btn-metrics">Rooms</a>
+    <a href="metrics" class="btn-metrics">metrics</a>
+  </div>
+</header>
+
+<section class="filters">
+  <div class="filter-group">
+    <input type="text" id="search" placeholder="Filter by name..." class="filter-input">
+  </div>
+  <div class="filter-group">
+    <select id="room-filter" class="filter-select">
+      <option value="all">All rooms</option>
+      {% for room in rooms %}
+      <option value="{{ room }}">{{ room }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="filter-group toggles">
+    <button class="toggle-btn active" data-filter="all">All</button>
+    <button class="toggle-btn" data-filter="on">On</button>
+    <button class="toggle-btn" data-filter="off">Off</button>
+    <button class="toggle-btn" data-filter="online">Online</button>
+    <button class="toggle-btn" data-filter="offline">Offline</button>
+  </div>
+  <div class="filter-group sort">
+    <label for="sort">Sort</label>
+    <select id="sort" class="filter-select">
+      <option value="name">Name</option>
+      <option value="room">Room</option>
+      <option value="power">Power</option>
+      <option value="current">Current</option>
+      <option value="voltage">Voltage</option>
+      <option value="energy">Energy</option>
+    </select>
+    <button id="sort-dir" class="sort-dir" title="Toggle ascending/descending">↓</button>
+  </div>
+</section>
+
+<main class="dashboard" id="dashboard">
+  {% for dev in devices %}
+  <article
+    class="device-card"
+    data-id="{{ dev.id }}"
+    data-name="{{ dev.name | lower }}"
+    data-room="{{ dev.room | lower }}"
+    data-loading="true"
+  >
+    <div class="card-header">
+      <div class="card-title">
+        <h2 class="device-name">{{ dev.name }}</h2>
+        <span class="room-name">{{ dev.room }}</span>
+      </div>
+      <div class="device-status">
+        <span class="badge offline">loading</span>
+      </div>
+    </div>
+
+    <div class="metrics-grid">
+      <div class="metric">
+        <span class="metric-label">Power</span>
+        <span class="metric-value">—</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Current</span>
+        <span class="metric-value">—</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Voltage</span>
+        <span class="metric-value">—</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Energy</span>
+        <span class="metric-value energy">—</span>
+      </div>
+    </div>
+  </article>
+  {% endfor %}
+</main>
+
+<footer class="site-footer">
+  <p>Poll interval: <strong>{{ poll_interval }}s</strong> · Re-discovery: <strong>{% if discover_interval > 0 %}{{ discover_interval }}s{% else %}disabled{% endif %}</strong></p>
+</footer>
+
+<div id="toggle-modal" class="modal">
+  <div class="modal-content">
+    <h2 id="modal-device-name"></h2>
+    <p class="modal-state" id="modal-current-state"></p>
+    <div class="modal-actions">
+      <button id="modal-turn-on" class="modal-btn on">Turn On</button>
+      <button id="modal-turn-off" class="modal-btn off">Turn Off</button>
+      <button id="modal-cancel" class="modal-btn cancel">Cancel</button>
+    </div>
+    <p id="modal-error" class="modal-error"></p>
+  </div>
+</div>
+
+<script>
+(function() {
+  const POLL_MS = {{ poll_interval }} * 1000;
+  const dashboard = document.getElementById('dashboard');
+  let cards = Array.from(dashboard.querySelectorAll('.device-card'));
+  const searchInput = document.getElementById('search');
+  const roomFilter = document.getElementById('room-filter');
+  const toggleBtns = document.querySelectorAll('.toggle-btn');
+  const sortSelect = document.getElementById('sort');
+  const sortDirBtn = document.getElementById('sort-dir');
+
+  let activeFilter = 'all';
+  let sortKey = 'name';
+  let sortAsc = true;
+
+  // -------------------------------------------------------------------------
+  // URL persistence
+  // -------------------------------------------------------------------------
+  function readFiltersFromURL() {
+    const params = new URLSearchParams(window.location.search);
+    const search = params.get('search') || '';
+    const room = params.get('room') || 'all';
+    const filter = params.get('filter') || 'all';
+    const sort = params.get('sort') || 'name';
+    const dir = params.get('dir') || 'asc';
+
+    searchInput.value = search;
+    roomFilter.value = room;
+
+    toggleBtns.forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.filter === filter);
+      if (btn.dataset.filter === filter) activeFilter = filter;
+    });
+
+    sortSelect.value = sort;
+    sortKey = sort;
+
+    sortAsc = dir !== 'desc';
+    sortDirBtn.textContent = sortAsc ? '↓' : '↑';
+  }
+
+  function writeFiltersToURL() {
+    const params = new URLSearchParams();
+    const search = searchInput.value.trim();
+    if (search) params.set('search', search);
+    if (roomFilter.value !== 'all') params.set('room', roomFilter.value);
+    if (activeFilter !== 'all') params.set('filter', activeFilter);
+    if (sortKey !== 'name') params.set('sort', sortKey);
+    if (!sortAsc) params.set('dir', 'desc');
+
+    const qs = params.toString();
+    const url = qs ? '?' + qs : window.location.pathname;
+    history.replaceState(null, '', url);
+  }
+
+  // -------------------------------------------------------------------------
+  // Filtering & sorting
+  // -------------------------------------------------------------------------
+  function applyFilters() {
+    const query = searchInput.value.trim().toLowerCase();
+    const roomQuery = roomFilter.value;
+
+    cards.forEach(card => {
+      const name = card.dataset.name;
+      const room = card.dataset.room;
+      const online = card.dataset.online === 'true';
+      const on = card.dataset.on === 'true';
+
+      let visible = true;
+
+      if (query && !name.includes(query)) visible = false;
+      if (roomQuery !== 'all' && room !== roomQuery) visible = false;
+      if (activeFilter === 'on' && !on) visible = false;
+      if (activeFilter === 'off' && on) visible = false;
+      if (activeFilter === 'online' && !online) visible = false;
+      if (activeFilter === 'offline' && online) visible = false;
+
+      card.style.display = visible ? '' : 'none';
+    });
+
+    updateCounts();
+    writeFiltersToURL();
+  }
+
+  function applySort() {
+    const visibleCards = cards.filter(c => c.style.display !== 'none');
+
+    visibleCards.sort((a, b) => {
+      let va = a.dataset[sortKey];
+      let vb = b.dataset[sortKey];
+
+      if (['power', 'current', 'voltage', 'energy'].includes(sortKey)) {
+        va = parseFloat(va);
+        vb = parseFloat(vb);
+        if (isNaN(va)) va = -1;
+        if (isNaN(vb)) vb = -1;
+      }
+
+      if (va < vb) return sortAsc ? -1 : 1;
+      if (va > vb) return sortAsc ? 1 : -1;
+      return 0;
+    });
+
+    visibleCards.forEach(card => dashboard.appendChild(card));
+  }
+
+  function updateCounts() {
+    const visible = cards.filter(c => c.style.display !== 'none');
+    const visibleOnline = visible.filter(c => c.dataset.online === 'true');
+    document.getElementById('online-count').textContent = visibleOnline.length;
+    document.getElementById('total-count').textContent = visible.length;
+  }
+
+  // -------------------------------------------------------------------------
+  // Async data loading
+  // -------------------------------------------------------------------------
+  function updateCard(card, dev) {
+    card.dataset.loading = 'false';
+    card.dataset.online = String(dev.online);
+    card.dataset.on = String(dev.on);
+    card.dataset.power = (dev.power || '—').replace(' W', '').replace('—', '-1');
+    card.dataset.current = (dev.current || '—').replace(' A', '').replace('—', '-1');
+    card.dataset.voltage = (dev.voltage || '—').replace(' V', '').replace('—', '-1');
+    card.dataset.energy = (dev.energy || '—').replace(' kWh', '').replace('—', '-1');
+
+    card.classList.toggle('offline', !dev.online);
+
+    const statusDiv = card.querySelector('.device-status');
+    statusDiv.innerHTML = '';
+
+    if (dev.online) {
+      statusDiv.appendChild(Object.assign(document.createElement('span'), {
+        className: 'badge online', textContent: '● online'
+      }));
+    } else {
+      statusDiv.appendChild(Object.assign(document.createElement('span'), {
+        className: 'badge offline', textContent: '✗ offline'
+      }));
+    }
+
+    if (dev.on === true) {
+      statusDiv.appendChild(Object.assign(document.createElement('span'), {
+        className: 'badge on', textContent: 'ON'
+      }));
+    } else if (dev.on === false) {
+      statusDiv.appendChild(Object.assign(document.createElement('span'), {
+        className: 'badge off', textContent: 'off'
+      }));
+    }
+
+    const metricValues = card.querySelectorAll('.metric-value');
+    const vals = [dev.power || '—', dev.current || '—', dev.voltage || '—', dev.energy || '—'];
+    metricValues.forEach((el, i) => {
+      el.textContent = vals[i];
+      el.classList.toggle('active', i === 0 && vals[i] !== '—');
+      el.classList.toggle('energy', i === 3);
+    });
+  }
+
+  async function loadStatuses() {
+    try {
+      const resp = await fetch('statuses');
+      const data = await resp.json();
+      if (!Array.isArray(data)) return;
+
+      data.forEach(dev => {
+        const card = cards.find(c => c.dataset.id === dev.id);
+        if (card) updateCard(card, dev);
+      });
+
+      applyFilters();
+      applySort();
+
+      // For any cards still loading, fetch individually so they populate
+      // independently without waiting for the next bulk poll.
+      const loadingCards = cards.filter(c => c.dataset.loading === 'true');
+      await Promise.all(
+        loadingCards.map(async (card) => {
+          try {
+            const r = await fetch('status/' + card.dataset.id);
+            if (!r.ok) return;
+            const dev = await r.json();
+            updateCard(card, dev);
+            applyFilters();
+            applySort();
+          } catch (e) {
+            // silently skip; will retry on next bulk poll
+          }
+        })
+      );
+    } catch (e) {
+      // silently retry next poll
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Event listeners
+  // -------------------------------------------------------------------------
+  searchInput.addEventListener('input', () => { applyFilters(); applySort(); });
+  roomFilter.addEventListener('change', () => { applyFilters(); applySort(); });
+
+  toggleBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      toggleBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeFilter = btn.dataset.filter;
+      applyFilters();
+      applySort();
+    });
+  });
+
+  sortSelect.addEventListener('change', () => {
+    sortKey = sortSelect.value;
+    applySort();
+    writeFiltersToURL();
+  });
+
+  sortDirBtn.addEventListener('click', () => {
+    sortAsc = !sortAsc;
+    sortDirBtn.textContent = sortAsc ? '↓' : '↑';
+    applySort();
+    writeFiltersToURL();
+  });
+
+  // -------------------------------------------------------------------------
+  // Toggle modal
+  // -------------------------------------------------------------------------
+  const modal = document.getElementById('toggle-modal');
+  const modalName = document.getElementById('modal-device-name');
+  const modalState = document.getElementById('modal-current-state');
+  const modalError = document.getElementById('modal-error');
+  const btnOn = document.getElementById('modal-turn-on');
+  const btnOff = document.getElementById('modal-turn-off');
+  const btnCancel = document.getElementById('modal-cancel');
+  let currentDeviceId = null;
+
+  function openModal(card) {
+    if (card.dataset.online !== 'true') return;
+    currentDeviceId = card.dataset.id;
+    modalName.textContent = card.querySelector('.device-name').textContent;
+    const isOn = card.dataset.on === 'true';
+    modalState.textContent = isOn ? 'Currently ON' : 'Currently off';
+    btnOn.style.display = isOn ? 'none' : '';
+    btnOff.style.display = isOn ? '' : 'none';
+    modalError.textContent = '';
+    modal.classList.add('active');
+  }
+
+  function closeModal() {
+    modal.classList.remove('active');
+    currentDeviceId = null;
+  }
+
+  async function doToggle(state) {
+    if (!currentDeviceId) return;
+    modalError.textContent = '';
+    try {
+      const resp = await fetch(`toggle/${currentDeviceId}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({state: state})
+      });
+      const data = await resp.json();
+      if (data.success) {
+        const card = cards.find(c => c.dataset.id === currentDeviceId);
+        closeModal();
+        if (card) {
+          card.dataset.on = String(state);
+          const statusDiv = card.querySelector('.device-status');
+          const existing = statusDiv.querySelector('.badge.on, .badge.off');
+          if (existing) existing.remove();
+          const badge = document.createElement('span');
+          badge.className = state ? 'badge on' : 'badge off';
+          badge.textContent = state ? 'ON' : 'off';
+          statusDiv.appendChild(badge);
+          applyFilters();
+          applySort();
+        }
+      } else {
+        modalError.textContent = data.error || 'Toggle failed';
+      }
+    } catch (e) {
+      modalError.textContent = 'Network error';
+    }
+  }
+
+  cards.forEach(card => {
+    card.addEventListener('click', () => openModal(card));
+  });
+
+  btnOn.addEventListener('click', () => doToggle(true));
+  btnOff.addEventListener('click', () => doToggle(false));
+  btnCancel.addEventListener('click', closeModal);
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+  });
+
+  // -------------------------------------------------------------------------
+  // PWA service worker
+  // -------------------------------------------------------------------------
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register(
+      '{{ url_for("static", filename="sw.js") }}',
+      { scope: '.' }
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Init
+  // -------------------------------------------------------------------------
+  readFiltersFromURL();
+  applyFilters();
+  applySort();
+  loadStatuses();
+  setInterval(loadStatuses, POLL_MS);
+})();
+</script>
+
+</body>
+</html>

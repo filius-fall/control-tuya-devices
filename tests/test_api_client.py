@@ -18,9 +18,9 @@ class ApiClientTest(unittest.TestCase):
 
     def test_require_tuya_settings_reports_missing_values(self):
         with (
-            mock.patch.object(config, "CLIENTKEY", None),
-            mock.patch.object(config, "CLIENTSECRET", "secret"),
-            mock.patch.object(config, "APIREGION", "in"),
+            mock.patch.object(config, "CLIENT_KEY", None),
+            mock.patch.object(config, "CLIENT_SECRET", "secret"),
+            mock.patch.object(config, "API_REGION", "in"),
         ):
             with self.assertRaisesRegex(RuntimeError, "CLIENTKEY"):
                 config.require_tuya_settings()

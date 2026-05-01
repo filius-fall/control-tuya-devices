@@ -1,69 +1,109 @@
-from __future__ import annotations
+import json
+import os
+from datetime import datetime, timezone
 
-import sys
-from typing import List
+from . import logger
+from . import local_client
 
-from . import setup as setup_wizard
-from .local import load_devices, poll_all_once, poll_continuously, cmd_list, stream_readings, refresh_devices, scan_devices
-from .models import DeviceConfig, PollResult
-from .serve import serve
+log = logger.logs
 
 
-def main() -> None:
-    if len(sys.argv) < 2:
-        print("Usage: uv run python run.py <command> [options]")
-        print()
-        print("Commands:")
-        print("  setup           Interactive setup wizard (needs internet, one-time)")
-        print("  refresh         Re-fetch keys + IPs from cloud (needs internet)")
-        print("  scan            Update device IPs via local scan (no internet needed)")
-        print("  poll            Poll all devices once (local only)")
-        print("  poll <seconds>  Poll all devices continuously at interval (local only)")
-        print("  serve           Start always-on polling + webhook push service")
-        print("  list            List saved devices")
-        sys.exit(1)
+def _collect_device_reading(device: dict) -> dict | None:
+    """Fetch status for one device locally and return a flattened reading dict."""
+    device_id = device.get("id")
+    name = device.get("name", "unknown")
+    if not device_id:
+        return None
 
-    command: str = sys.argv[1].lower()
+    dps = None
+    source = None
 
-    if command == "setup":
-        setup_wizard.run_setup()
-    elif command == "refresh":
-        refresh_devices()
-    elif command == "scan":
-        scan_devices()
-    elif command == "poll":
-        devices: List[DeviceConfig] = load_devices()
-        print(f"Loaded {len(devices)} device(s) from local cache")
+    local_key = device.get("local_key") or device.get("key")
+    ip = device.get("ip") or device.get("last_ip")
+    version = device.get("version", "3.3")
+    if local_key and ip:
+        local_status = local_client.get_device_status_local(
+            device_id, ip_address=ip, local_key=local_key, version=version
+        )
+        if local_status and "dps" in local_status:
+            dps = local_status["dps"]
+            source = "local"
 
-        interval: int | None = None
-        if len(sys.argv) > 2:
-            try:
-                interval = int(sys.argv[2])
-            except ValueError:
-                print("Error: interval must be a number of seconds")
-                sys.exit(1)
+    if dps is None:
+        log.warning("No local reading for device", device=name, device_id=device_id)
+        return None
 
-        if interval is not None:
-            poll_continuously(interval_seconds=interval, devices=devices)
-        else:
-            results: List[PollResult] = poll_all_once(devices)
-            online: int = sum(1 for r in results if r.reading.online)
-            print(f"Polled {len(results)} device(s), {online} online")
-    elif command == "serve":
-        interval: int | None = None
-        if len(sys.argv) > 2:
-            try:
-                interval = int(sys.argv[2])
-            except ValueError:
-                print("Error: interval must be a number of seconds")
-                sys.exit(1)
-        serve(interval_seconds=interval)
-    elif command == "list":
-        cmd_list()
-    else:
-        print(f"Unknown command: {command}")
-        print("Use 'setup', 'refresh', 'scan', 'poll', 'serve', or 'list'")
-        sys.exit(1)
+    reading = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "device_id": device_id,
+        "device_name": name,
+        "source": source,
+        "dps": dps,
+    }
+    return reading
+
+
+def run_once():
+    """Single-pass data collection for all configured switches (prints JSONL)."""
+    from . import devices as device_config
+
+    switches = device_config.load_switches()
+    if not switches:
+        log.error(
+            "No devices configured. Run 'tuya setup' to refresh the SQLite cache."
+        )
+        return
+
+    log.info("Starting collection run", switch_count=len(switches))
+    for sw in switches:
+        reading = _collect_device_reading(sw)
+        if reading:
+            print(json.dumps(reading))
+            log.info(
+                "Collected reading",
+                device=sw.get("name"),
+                source=reading["source"],
+                dps=reading["dps"],
+            )
+
+
+# ---------------------------------------------------------------------------
+# JSON-array persistence helpers (upstream compatibility)
+# ---------------------------------------------------------------------------
+
+
+def read_json_array(file_path):
+    if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+        return []
+
+    with open(file_path, "r", encoding="utf-8") as file:
+        try:
+            data = json.load(file)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON in {file_path}") from exc
+
+    if not isinstance(data, list):
+        raise ValueError(f"Expected {file_path} to contain a JSON array")
+
+    return data
+
+
+def append_json_array(file_path, item):
+    data = read_json_array(file_path)
+    data.append(item)
+
+    temp_path = f"{file_path}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as file:
+        json.dump(data, file, indent=2)
+        file.write("\n")
+
+    os.replace(temp_path, file_path)
+    return data
+
+
+def main():
+    """Entry point — runs a single collection pass by default."""
+    run_once()
 
 
 if __name__ == "__main__":

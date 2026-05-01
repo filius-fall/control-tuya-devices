@@ -1,20 +1,19 @@
 FROM python:3.12-slim
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-
 WORKDIR /app
 
+# Install uv
+RUN pip install --no-cache-dir uv
+
+# Copy project files
 COPY pyproject.toml .
-COPY tuya/ tuya/
+COPY tuya/ ./tuya/
 COPY run.py .
 
-RUN uv sync --no-dev --frozen
+# Install dependencies
+RUN uv sync --no-dev
 
-VOLUME /app/data
-
-ENV POLL_INTERVAL=60
-ENV WEBHOOK_URLS=""
-ENV WEBHOOK_TIMEOUT=10
-ENV WEBHOOK_RETRIES=3
-
-CMD ["uv", "run", "python", "run.py", "serve"]
+# Default: run metrics exporter via gunicorn
+# Override with docker run args if needed
+EXPOSE 8000
+CMD ["uv", "run", "gunicorn", "-w", "1", "-b", "0.0.0.0:8000", "tuya.web:app"]

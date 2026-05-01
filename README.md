@@ -1,416 +1,207 @@
 # Control Tuya Devices
 
-Collect power consumption data from Tuya devices on your local network. The cloud API is only needed **once** during setup — after that, all polling is fully local (no internet required).
+Monitor power usage from Tuya smart switches via a web dashboard and export metrics to Prometheus.
 
-## Quick Start
+## Requirements
 
-### Install
+- Python 3.10+
+- [uv](https://docs.astral.sh/uv/)
+- Tuya Developer account with API credentials
+
+## Installation
 
 ```bash
-git clone git@github.com:filius-fall/control-tuya-devices.git
-cd control-tuya-devices
 uv sync
 ```
 
-### One-Time Setup (needs internet)
+## Configuration
+
+### 1. Tuya API Credentials
+
+Create a `.env` file in the project root:
 
 ```bash
-uv run python run.py setup
+CLIENTKEY="<API Client ID from Tuya dashboard>"
+CLIENTSECRET="<API Client Secret from Tuya dashboard>"
+APIREGION="<region from Tuya Dashboard, e.g., in, eu, us>"
 ```
 
-This launches an interactive wizard that will:
-1. Ask for your Tuya Cloud API credentials
-2. Test the connection
-3. Guide you through linking your Smart Life app
-4. Scan your local network for device IPs
-5. Save everything locally
+You need the **Device Connection Service** and **Home Management** APIs enabled in your Tuya IoT project.
 
-**After setup, you can disconnect from the internet forever.**
+### 2. Device Discovery (optional)
 
-### Manual Setup (alternative)
+Device discovery is manual. Refresh the cached device list and LAN metadata into SQLite with:
 
-If you prefer not to use the wizard:
+```bash
+uv run tuya setup
+```
 
-1. Copy `.env.example` to `.env` and fill in your credentials
-2. Get credentials from [Tuya IoT Platform](https://iot.tuya.com)
-3. Run `uv run python run.py setup`
+This performs a cloud refresh and optional LAN scan, then stores the results in `tuya.db` for ongoing local polling.
 
 ## Usage
 
-```bash
-uv run python run.py poll          # Poll all devices once (local only)
-uv run python run.py poll 60       # Poll every 60 seconds (local only)
-uv run python run.py serve         # Always-on service with webhook push
-uv run python run.py serve 30      # Serve mode with 30s interval
-uv run python run.py list          # List saved devices
-uv run python run.py scan          # Update device IPs via local scan (no internet)
-uv run python run.py refresh       # Re-fetch keys + IPs from cloud (needs internet)
-```
+### Web Dashboard & Prometheus Exporter
 
-Press `Ctrl+C` to stop continuous polling.
-
-## Output
-
-Readings are saved to `data/readings/<device_name>.jsonl` — one JSON line per reading:
-
-```json
-{
-  "timestamp": "2026-05-01T14:30:00+0530",
-  "data": {
-    "voltage_v": 240.8,
-    "current_ma": 1177,
-    "power_w": 173.0,
-    "energy_wh": 0.029,
-    "switch_1": true,
-    "status": "online"
-  }
-}
-```
-
-Power outage events are also logged:
-
-```json
-{"timestamp": "...", "data": {"event": "power_lost", "device_name": "...", "last_seen_online": "..."}}
-{"timestamp": "...", "data": {"event": "power_restored", "device_name": "...", "outage_duration_seconds": 3600}}
-```
-
-## Architecture
-
-```
-setup (cloud, one-time)     poll (local, no internet)
-       │                            │
-  Tuya Cloud API              tinytuya.Device
-       │                       (local TCP)
-       ▼                            │
- data/devices.json ───────────────▶ data/readings/*.jsonl
-```
-
-## Commands
-
-| Command | Cloud? | When to use |
-|---------|--------|-------------|
-| `setup` | Yes | First time, or adding new devices |
-| `scan` | **No** | IPs changed after router reboot (local scan only) |
-| `refresh` | Yes | Keys rotated (rare), needs new credentials |
-| `poll` | **No** | Day-to-day data collection |
-| `serve` | **No** | Always-on service with webhook push |
-| `list` | **No** | Show saved devices |
-
-## Precautions & Best Practices
-
-### Set Static IPs (strongly recommended)
-
-Tuya devices get their IP from your router's DHCP. If the router reboots, devices may get new IPs and polling will fail until you run `scan`. To prevent this:
-
-1. Log into your router admin panel (usually `192.168.1.1`)
-2. Find the DHCP / static IP assignment section
-3. Assign fixed IPs to each Tuya device (by MAC address)
-4. Now IPs never change, even after reboots or power cuts
-
-### Local Keys
-
-- The local key is an encryption key needed to decode device data over the local network
-- Keys are saved in `data/devices.json` after setup — **back this file up**
-- Keys **do not** rotate from internet outages or IP changes
-- Keys **can** change if you factory reset a device or remove/re-add it in the Smart Life app
-- If keys change, you'll need `refresh` (needs internet + active cloud account)
-
-### Cloud Account
-
-- The Tuya free trial expires — this is fine, you only need it during `setup` or `refresh`
-- If your trial expired and you need new keys, create a new Tuya developer account
-- Once keys are saved locally, the cloud account is irrelevant
-
-### Network
-
-- Devices and the machine running this code must be on the **same WiFi network**
-- No internet needed for polling — works on an isolated LAN
-- If a device is offline (power cut), it's logged as `status: offline`
-- When it comes back online, a `power_restored` event is logged with the outage duration
-
-### Data
-
-- Readings are appended to JSONL files — they grow over time
-- Rotate or archive old files periodically
-- `data/devices.json` contains your local keys — **do not commit this to public repos** (already in `.gitignore`)
-
-### Device Behavior (Tuya quirks)
-
-- Some Tuya devices stop reporting `current` and `power` DPs if the value hasn't changed significantly — voltage usually keeps reporting
-- Polling too frequently (< 10s) can cause devices to throttle or drop power data
-- Recommended polling interval: **30–60 seconds** for consistent readings
-- Devices may return error 914 or 904 intermittently — the code auto-retries with different protocol versions
-- Power data (voltage, current, watts) is only reported while the device is ON and has something plugged in
-
-## Integration with Other Code
-
-```python
-from tuya import (
-    DeviceConfig, PowerReading, PollResult,
-    load_devices, stream_readings, poll_devices,
-)
-
-devices = load_devices()
-
-# Stream readings as a generator
-for results in stream_readings(interval_seconds=60, devices=devices):
-    for r in results:
-        print(r.reading.voltage_v, r.reading.power_w, r.reading.online)
-        if r.event:
-            print(r.event)
-
-# Or poll once and process
-results = poll_devices(devices, save=True)
-for r in results:
-    reading: PowerReading = r.reading
-    print(reading.to_dict())
-```
-
-### Types
-
-- `DeviceConfig` — device config with `to_dict()` / `from_dict()`
-- `PowerReading` — typed reading: `voltage_v`, `current_ma`, `power_w`, `energy_wh`, `online`
-- `PollResult` — a `PowerReading` + optional power event dict
-- `DeviceStatus` — online/offline tracking state
-
-## Prometheus / Grafana / Dashboard Integration
-
-The JSONL output is designed to be easy to pipe into time-series databases and dashboards. Here are common setups:
-
-### Option 1: Export to Prometheus via pushgateway
-
-```python
-from tuya import load_devices, stream_readings
-import requests
-
-PUSHGATEWAY = "http://localhost:9091/metrics/job/tuya"
-
-devices = load_devices()
-
-for results in stream_readings(interval_seconds=60, devices=devices):
-    metrics = ""
-    for r in results:
-        rd = r.reading
-        labels = f'device="{rd.device_name}",ip="{rd.ip}"'
-        if rd.voltage_v is not None:
-            metrics += f'tuya_voltage_volts{{{labels}}} {rd.voltage_v}\n'
-        if rd.current_ma is not None:
-            metrics += f'tuya_current_ma{{{labels}}} {rd.current_ma}\n'
-        if rd.power_w is not None:
-            metrics += f'tuya_power_watts{{{labels}}} {rd.power_w}\n'
-        if rd.energy_wh is not None:
-            metrics += f'tuya_energy_wh{{{labels}}} {rd.energy_wh}\n'
-        metrics += f'tuya_online{{{labels}}} {1 if rd.online else 0}\n'
-
-    requests.post(PUSHGATEWAY, data=metrics)
-```
-
-### Option 2: InfluxDB / TimescaleDB via JSONL tail
+Run the Flask app with gunicorn:
 
 ```bash
-# Tail the JSONL file and pipe to influxdb
-tail -F data/readings/Zebronics_ZEB-SP116.jsonl | \
-  while read line; do
-    ts=$(echo "$line" | jq -r '.timestamp')
-    device=$(echo "$line" | jq -r '.data.device_name')
-    power=$(echo "$line" | jq -r '.data.power_w // "null"')
-    voltage=$(echo "$line" | jq -r '.data.voltage_v // "null"')
-    influx write \
-      --bucket tuya \
-      "power,device=$device voltage=$voltage,power=$power,current=$current $ts"
-  done
+uv run gunicorn -w 1 -b 0.0.0.0:8000 tuya.web:app
 ```
 
-### Option 3: Custom HTTP endpoint
-
-```python
-from tuya import load_devices, stream_readings
-import requests
-
-API_URL = "https://your-dashboard.example.com/api/readings"
-
-devices = load_devices()
-
-for results in stream_readings(interval_seconds=60, devices=devices):
-    for r in results:
-        if r.reading.online:
-            requests.post(API_URL, json=r.reading.to_dict())
-```
-
-### Exposed Metrics (for dashboards)
-
-| Metric | Field | Unit | Description |
-|--------|-------|------|-------------|
-| Voltage | `voltage_v` | Volts (V) | Line voltage, e.g. 240.8 |
-| Current | `current_ma` | Milliamps (mA) | Load current |
-| Power | `power_w` | Watts (W) | Real-time power consumption |
-| Energy | `energy_wh` | Watt-hours (Wh) | Cumulative energy consumption |
-| Status | `status` | `online`/`offline` | Device reachability |
-| Outage | `outage_duration_seconds` | Seconds | Duration of power outage (in events) |
-
-### Recommended Polling Interval
-
-| Interval | Use case |
-|----------|----------|
-| 10s | High-resolution monitoring (devices may throttle power data) |
-| 30s | Good balance for most devices |
-| 60s | Recommended for long-term logging and dashboards |
-| 300s | Low-frequency energy tracking |
-
-## Webhook Push (Built-in)
-
-The `serve` command polls devices and pushes readings to your HTTP endpoint(s) automatically. Configure via environment variables or `.env`:
+Or use the provided Dockerfile:
 
 ```bash
-# .env
-WEBHOOK_URLS=http://localhost:8080/api/readings,http://localhost:9091/metrics/job/tuya
-WEBHOOK_TIMEOUT=10
-WEBHOOK_RETRIES=3
-WEBHOOK_RETRY_DELAY=1.0
-WEBHOOK_BATCH=true
-POLL_INTERVAL=60
+docker compose up --build
 ```
+
+**Routes:**
+
+| Route | Description |
+|-------|-------------|
+| `/` | Device dashboard with power/current/voltage/energy readings |
+| `/metrics` | Prometheus scrape endpoint |
+| `/rooms` | Room assignment management |
+| `/refresh` | Trigger manual device re-discovery and refresh the SQLite cache |
+
+**Environment variables:**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `WEBHOOK_URLS` | *(empty)* | Comma-separated HTTP endpoints. Leave empty to disable webhooks |
-| `WEBHOOK_TIMEOUT` | `10` | HTTP request timeout in seconds |
-| `WEBHOOK_RETRIES` | `3` | Retry count per request on failure |
-| `WEBHOOK_RETRY_DELAY` | `1.0` | Seconds between retries |
-| `WEBHOOK_BATCH` | `true` | `true` = one POST per poll cycle with all readings. `false` = one POST per device |
-| `POLL_INTERVAL` | `60` | Seconds between poll cycles (also usable as CLI arg: `serve 30`) |
+| `TUYA_POLL_INTERVAL` | `30` | Seconds between metric polls |
+| `TUYA_DB_PATH` | `tuya.db` | Shared SQLite path for device cache, room overrides, status cache, and energy state |
 
-### Webhook Payload
+### Dashboard Features
 
-**Batch mode** (`WEBHOOK_BATCH=true`) — one POST per cycle:
+- **Real-time readings** — Power (W), current (A), voltage (V), cumulative energy (kWh)
+- **Filters** — Search by name, filter by room, filter by on/off/online/offline
+- **Sorting** — By name, room, power, current, voltage, energy
+- **Room badges** — Auto-discovered from Tuya Cloud, or manually overridden
+- **Device toggle** — Click any online device card to turn it on or off
+- **No device IDs exposed** — Safe for screenshots
 
-```json
-{
-  "readings": [
-    {
-      "timestamp": "2026-05-01T14:30:00+0530",
-      "device_name": "Zebronics_SP116",
-      "device_id": "d714e8...",
-      "ip": "192.168.1.2",
-      "status": "online",
-      "voltage_v": 240.8,
-      "current_ma": 1177,
-      "power_w": 173.0,
-      "energy_wh": 0.029
-    }
-  ],
-  "events": [
-    {
-      "timestamp": "...",
-      "data": {"event": "power_restored", "device_name": "...", "outage_duration_seconds": 3600}
-    }
-  ]
-}
-```
+### Room Management
 
-**Individual mode** (`WEBHOOK_BATCH=false`) — one POST per device:
+If the Tuya API doesn't return room data, assign rooms manually:
 
-```json
-{
-  "reading": { "timestamp": "...", "device_name": "...", "voltage_v": 240.8, ... },
-  "event": null
-}
-```
+1. Open `/rooms` in your browser
+2. Select devices via checkboxes (or "select all")
+3. Enter a room name and click **Assign to Room**
+4. Download the mapping as JSON for backup or to copy to another server
+5. Upload a JSON mapping to restore or migrate assignments
 
-### Programmatic Usage
+Discovered devices, room overrides, cached statuses, and synthesized energy totals are stored together in SQLite (`tuya.db` by default) and survive restarts.
 
-```python
-from tuya import (
-    load_devices, poll_devices, push_webhooks, WebhookConfig,
-)
-
-devices = load_devices()
-config = WebhookConfig(
-    urls=["http://localhost:8080/api/readings"],
-    timeout=10,
-    retries=3,
-    batch=True,
-)
-
-results = poll_devices(devices, save=True)
-stats = push_webhooks(results, config)
-print(f"Sent: {stats['sent']}, Failed: {stats['failed']}")
-```
-
-## Docker
-
-Run as an always-on service with Docker:
+### CLI Commands
 
 ```bash
-# Build and run
-docker compose up -d
+# Interactive device setup (TUI)
+uv run tuya setup
 
-# View logs
-docker compose logs -f tuya-poll
+# Live top view
+uv run tuya-top
 
-# Stop
-docker compose down
+# One-shot status table
+uv run tuya status
+
+# List cached devices
+uv run tuya list-devices
+uv run tuya list-devices --refresh
+
+# Fetch historic power data
+uv run tuya history <device_id> --hours 24 --verbose
 ```
 
-### Prerequisites
+## Prometheus Integration
 
-1. Run `setup` locally first to create `data/devices.json` with your device keys
-2. The Docker container uses `network_mode: host` — required for local device communication (Linux only)
-
-### docker-compose.yml
+Add this job to your `prometheus.yml`:
 
 ```yaml
-services:
-  tuya-poll:
-    build: .
-    container_name: tuya-poll
-    restart: unless-stopped
-    network_mode: host
-    env_file: .env
-    environment:
-      - POLL_INTERVAL=60
-    volumes:
-      - ./data:/app/data
+scrape_configs:
+  - job_name: tuya
+    static_configs:
+      - targets: ['localhost:8000']
+    metrics_path: /metrics
 ```
 
-### Environment Variables
+### Available Metrics
 
-Copy `.env.example` to `.env` and set:
+All live device metrics use the stable `device_id` label. Human-readable metadata is exposed separately via `tuya_device_info{device_id,device,room}` so renames and room moves do not break metric continuity.
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `tuya_power_watts` | Gauge | Current power draw |
+| `tuya_current_amps` | Gauge | Current current |
+| `tuya_voltage_volts` | Gauge | Current voltage |
+| `tuya_energy_kwh` | Gauge | Raw device-reported cumulative energy for the current day (resets at midnight) |
+| `tuya_energy_joules_total` | Counter | Exporter-maintained monotonic total energy synthesized from the daily-reset device meter |
+| `tuya_energy_resets_total` | Counter | Number of daily energy counter resets detected by the exporter |
+| `tuya_online` | Gauge | Device reachability (1 = online, 0 = offline) |
+| `tuya_switch_state` | Gauge | Relay state (1 = on, 0 = off, `NaN` = unknown/offline) |
+| `tuya_device_info` | Gauge | Info metric for joining `device_id` to current `device` and `room` labels |
+
+**Recommended queries**
+
+- Hourly energy in kWh:
+  ```promql
+  increase(tuya_energy_joules_total[1h]) / 3.6e6
+  ```
+- Energy by room in kWh:
+  ```promql
+  sum by (room) (
+    increase(tuya_energy_joules_total[1h])
+      * on (device_id) group_left(device, room) tuya_device_info
+  ) / 3.6e6
+  ```
+- Device-reported usage so far today:
+  ```promql
+  tuya_energy_kwh
+  ```
+
+## Deployment
+
+### Docker Compose
 
 ```bash
-# Required for setup/refresh only (container just polls)
-CLIENTKEY="..."
-CLIENTSECRET="..."
-APIREGION="..."
-
-# Webhook endpoints (optional)
-WEBHOOK_URLS="http://your-dashboard:8080/api/readings"
-POLL_INTERVAL=60
+docker compose up -d
 ```
 
-### Manual Docker Build
+The bundled compose file persists exporter state in `./data/tuya.db`.
 
-```bash
-docker build -t tuya-poll .
-docker run -d \
-  --name tuya-poll \
-  --network host \
-  --env-file .env \
-  -v $(pwd)/data:/app/data \
-  tuya-poll
+No separate `switches.toml` is required; device metadata is cached in SQLite.
+
+### systemd
+
+A sample service file is in `deploy/tuya-exporter.service`. Copy and adapt the `WorkingDirectory`, `EnvironmentFile`, and `ExecStart` paths.
+
+### Ansible
+
+An Ansible role is in `deploy/ansible/roles/tuya_exporter/`. Import it into your playbook:
+
+```yaml
+- hosts: monitoring
+  roles:
+    - role: tuya_exporter
 ```
 
-> **Note:** `network_mode: host` is required because tinytuya uses UDP broadcast for device discovery and TCP to local device IPs. This only works on Linux Docker hosts. On macOS/Windows, run the service directly with `uv run python run.py serve`.
+## Project Structure
 
-## Troubleshooting
-
-| Issue | Fix |
-|-------|-----|
-| "plan expired" | Create a new Tuya developer account, then `refresh` |
-| 0 devices found | Link your Smart Life app in the Tuya IoT project |
-| Device timeout | Make sure device is on the same WiFi network |
-| Error 914 / 904 | Run `scan` to update IPs, or set static IPs on router |
-| Permission denied | Link app account to the correct project |
-| Keys rotated | Run `refresh` with active cloud account |
-
----
+```
+.
+├── tuya/
+│   ├── api_client.py      # Tuya Cloud API wrapper
+│   ├── room_config.py     # SQLite room override storage
+│   ├── web.py             # Flask dashboard + Prometheus exporter
+│   ├── local_client.py    # Direct LAN device polling
+│   ├── logger.py          # Structured logging
+│   ├── top.py             # Live-updating top view
+│   └── templates/
+│       ├── index.html     # Dashboard
+│       └── rooms.html     # Room management
+├── deploy/
+│   ├── docker-compose.yml
+│   └── ansible/           # Ansible role
+├── Dockerfile
+├── pyproject.toml
+├── tuya.db                # Shared SQLite device/status/room/energy state (gitignored)
+└── .env                   # API credentials (gitignored)
+```

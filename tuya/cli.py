@@ -7,6 +7,7 @@ import time
 from rich.console import Console
 
 from tuya import device_store
+from tuya import room_config
 from tuya import setup as setup_module
 from tuya import top as top_module
 from tuya import history as history_module
@@ -128,14 +129,17 @@ def cmd_list_devices(args):
     table.add_column("Added", style="dim")
     table.add_column("Updated", style="dim")
 
+    room_overrides = room_config.get_overrides()
     for dev in devices:
         local_key = dev.get("local_key") or dev.get("key") or ""
         change = changes_by_id.get(dev.get("id", ""), "")
         row_style = "green" if change == "inserted" else ("yellow" if change == "updated" else "")
+        dev_id = dev.get("id", "")
+        room = room_overrides.get(dev_id) or dev.get("room") or "unknown"
         table.add_row(
             dev.get("name", "unknown"),
-            dev.get("id", ""),
-            dev.get("room") or "unknown",
+            dev_id,
+            room,
             "yes" if dev.get("enabled") else "no",
             dev.get("ip") or dev.get("last_ip") or "—",
             str(dev.get("version") or "3.3"),

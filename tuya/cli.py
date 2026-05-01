@@ -1,5 +1,6 @@
 import argparse
 import signal
+import subprocess
 import sys
 import time
 
@@ -9,6 +10,7 @@ from tuya import device_store
 from tuya import setup as setup_module
 from tuya import top as top_module
 from tuya import history as history_module
+from tuya import local_client
 from tuya.rich_output import print_device_table, print_summary, print_error
 
 console = Console(force_terminal=True)
@@ -119,6 +121,7 @@ def cmd_list_devices(args):
     table.add_column("Device", style="cyan")
     table.add_column("Device ID", style="dim")
     table.add_column("Room")
+    table.add_column("Enabled")
     table.add_column("IP")
     table.add_column("Version")
     table.add_column("Local Key", justify="center")
@@ -133,6 +136,7 @@ def cmd_list_devices(args):
             dev.get("name", "unknown"),
             dev.get("id", ""),
             dev.get("room") or "unknown",
+            "yes" if dev.get("enabled") else "no",
             dev.get("ip") or dev.get("last_ip") or "—",
             str(dev.get("version") or "3.3"),
             "yes" if local_key else "no",
@@ -143,6 +147,106 @@ def cmd_list_devices(args):
 
     console.print(table)
     console.print(f"[dim]{len(devices)} device(s)[/dim]")
+
+
+def _ping_host(ip: str, timeout_seconds: int = 2) -> tuple[bool, str]:
+    try:
+        proc = subprocess.run(
+            ["ping", "-c", "1", "-W", str(timeout_seconds), ip],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds + 2,
+        )
+        if proc.returncode == 0:
+            return True, "ok"
+        stderr = (proc.stderr or "").strip()
+        return False, stderr or "no reply"
+    except Exception as exc:
+        return False, str(exc)
+
+
+def cmd_doctor(args):
+    """Check basic network reachability and local API health for cached devices."""
+    devices = device_store.get_devices()
+    if args.enabled_only:
+        devices = [dev for dev in devices if dev.get("enabled")]
+
+    if not devices:
+        print_error("No cached devices to check.")
+        sys.exit(1)
+
+    from rich.table import Table
+    from rich import box
+
+    table = Table(
+        title="Tuya Doctor",
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold magenta",
+    )
+    table.add_column("Device", style="cyan")
+    table.add_column("Enabled")
+    table.add_column("IP")
+    table.add_column("Ping")
+    table.add_column("Local API")
+    table.add_column("Notes", style="dim")
+
+    ping_ok_count = 0
+    local_ok_count = 0
+
+    for dev in devices:
+        dev_id = dev.get("id", "")
+        name = dev.get("name", "unknown")
+        enabled = bool(dev.get("enabled"))
+        ip = dev.get("ip") or dev.get("last_ip") or ""
+        local_key = dev.get("local_key") or dev.get("key") or ""
+        version = str(dev.get("version") or "3.3")
+
+        ping_text = "[yellow]skip[/yellow]"
+        local_text = "[yellow]skip[/yellow]"
+        notes: list[str] = []
+        row_style = ""
+
+        if not ip:
+            notes.append("missing IP")
+        else:
+            ping_ok, ping_note = _ping_host(ip, timeout_seconds=args.ping_timeout)
+            if ping_ok:
+                ping_ok_count += 1
+                ping_text = "[green]ok[/green]"
+            else:
+                ping_text = "[red]fail[/red]"
+                notes.append(f"ping: {ping_note}")
+                row_style = "red"
+
+        if not local_key:
+            notes.append("missing local key")
+        elif not ip:
+            pass
+        else:
+            status = local_client.get_device_status_local(dev_id, local_key, ip, version)
+            if status and "dps" in status:
+                local_ok_count += 1
+                local_text = "[green]ok[/green]"
+            else:
+                local_text = "[red]fail[/red]"
+                notes.append("local status failed")
+                row_style = row_style or "yellow"
+
+        table.add_row(
+            name,
+            "yes" if enabled else "no",
+            ip or "—",
+            ping_text,
+            local_text,
+            "; ".join(notes) if notes else "—",
+            style=row_style,
+        )
+
+    console.print(table)
+    console.print(
+        f"[dim]Ping OK: {ping_ok_count}/{len(devices)} · Local API OK: {local_ok_count}/{len(devices)}[/dim]"
+    )
 
 
 def cmd_history(args):
@@ -272,10 +376,8 @@ def cli():
     parser = argparse.ArgumentParser(description="Tuya Smart Switch Power Monitor")
     sub = parser.add_subparsers(dest="command", help="Commands")
 
-    # status
     sub.add_parser("status", help="Show a one-shot rich table of current device status")
 
-    # top
     p_top = sub.add_parser("top", help="Live-updating top view (tuya-top)")
     p_top.add_argument(
         "--interval",
@@ -284,7 +386,6 @@ def cli():
         help="Refresh interval in seconds (default: 2)",
     )
 
-    # setup
     p_setup = sub.add_parser(
         "setup", help="Refresh the SQLite device cache from Tuya Cloud"
     )
@@ -296,7 +397,6 @@ def cli():
         help="Skip LAN IP scan",
     )
 
-    # list-devices
     p_list = sub.add_parser("list-devices", help="List cached devices")
     p_list.add_argument(
         "--refresh",
@@ -311,7 +411,21 @@ def cli():
         help="Skip LAN IP scan when used with --refresh",
     )
 
-    # history
+    p_doctor = sub.add_parser(
+        "doctor", help="Check ping reachability and local API health for cached devices"
+    )
+    p_doctor.add_argument(
+        "--enabled-only",
+        action="store_true",
+        help="Only check enabled devices",
+    )
+    p_doctor.add_argument(
+        "--ping-timeout",
+        type=int,
+        default=2,
+        help="Ping timeout in seconds (default: 2)",
+    )
+
     p_hist = sub.add_parser("history", help="Show historic power data for a device")
     p_hist.add_argument("device_id", help="Device ID to query")
     p_hist.add_argument(
@@ -321,7 +435,6 @@ def cli():
         "--verbose", action="store_true", help="Show individual readings"
     )
 
-    # serve
     p_serve = sub.add_parser(
         "serve", help="Always-on polling service with webhook push"
     )
@@ -342,12 +455,13 @@ def cli():
         cmd_setup(args)
     elif args.command == "list-devices":
         cmd_list_devices(args)
+    elif args.command == "doctor":
+        cmd_doctor(args)
     elif args.command == "history":
         cmd_history(args)
     elif args.command == "serve":
         cmd_serve(args)
     else:
-        # Default: show help
         parser.print_help()
 
 

@@ -1,22 +1,28 @@
+from __future__ import annotations
+
+import json
 import os
 import sys
+from typing import Any, Dict, List, Optional, Tuple
 
 import tinytuya
 
-
-BOLD = "\033[1m"
-GREEN = "\033[32m"
-YELLOW = "\033[33m"
-RED = "\033[31m"
-CYAN = "\033[36m"
-RESET = "\033[0m"
-
-ENV_FILE = ".env"
-ENV_EXAMPLE_FILE = ".env.example"
+from .models import DeviceConfig, DpsMeta
 
 
-def _print_header(text):
-    width = 60
+BOLD: str = "\033[1m"
+GREEN: str = "\033[32m"
+YELLOW: str = "\033[33m"
+RED: str = "\033[31m"
+CYAN: str = "\033[36m"
+RESET: str = "\033[0m"
+
+ENV_FILE: str = ".env"
+ENV_EXAMPLE_FILE: str = ".env.example"
+
+
+def _print_header(text: str) -> None:
+    width: int = 60
     print()
     print(f"{BOLD}{CYAN}{'=' * width}{RESET}")
     print(f"{BOLD}{CYAN}  {text}{RESET}")
@@ -24,50 +30,48 @@ def _print_header(text):
     print()
 
 
-def _print_step(step_num, text):
+def _print_step(step_num: int, text: str) -> None:
     print(f"\n{BOLD}{GREEN}[Step {step_num}]{RESET} {text}\n")
 
 
-def _print_success(text):
+def _print_success(text: str) -> None:
     print(f"  {GREEN}✓ {text}{RESET}")
 
 
-def _print_error(text):
+def _print_error(text: str) -> None:
     print(f"  {RED}✗ {text}{RESET}")
 
 
-def _print_warning(text):
+def _print_warning(text: str) -> None:
     print(f"  {YELLOW}⚠ {text}{RESET}")
 
 
-def _print_info(text):
+def _print_info(text: str) -> None:
     print(f"  {CYAN}→ {text}{RESET}")
 
 
-def _prompt(text, default=""):
-    suffix = f" [{default}]" if default else ""
-    value = input(f"  {text}{suffix}: ").strip()
+def _prompt(text: str, default: str = "") -> str:
+    suffix: str = f" [{default}]" if default else ""
+    value: str = input(f"  {text}{suffix}: ").strip()
     return value if value else default
 
 
-def _prompt_required(text):
+def _prompt_required(text: str) -> str:
     while True:
-        value = input(f"  {text}: ").strip()
+        value: str = input(f"  {text}: ").strip()
         if value:
             return value
         _print_error("This field is required.")
 
 
-def _save_env(data):
-    lines = []
-    for key, value in data.items():
-        lines.append(f'{key}="{value}"')
+def _save_env(data: Dict[str, str]) -> None:
+    lines: List[str] = [f'{key}="{value}"' for key, value in data.items()]
     with open(ENV_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
 
-def _save_env_example():
-    content = (
+def _save_env_example() -> None:
+    content: str = (
         'CLIENTKEY="<Access ID / Client ID from Tuya IoT Platform>"\n'
         'CLIENTSECRET="<Access Secret / Client Secret from Tuya IoT Platform>"\n'
         'APIREGION="<Data center region: in, eu, us, cn, etc.>"\n'
@@ -76,9 +80,11 @@ def _save_env_example():
         f.write(content)
 
 
-def _test_cloud_connection(api_key, api_secret, api_region):
+def _test_cloud_connection(
+    api_key: str, api_secret: str, api_region: str
+) -> Tuple[bool, str, Optional[tinytuya.Cloud]]:
     try:
-        client = tinytuya.Cloud(
+        client: tinytuya.Cloud = tinytuya.Cloud(
             apiRegion=api_region,
             apiKey=api_key,
             apiSecret=api_secret,
@@ -90,7 +96,7 @@ def _test_cloud_connection(api_key, api_secret, api_region):
             return True, f"Connected! Found {len(devices)} device(s)", client
         return False, f"Unexpected response: {devices}", None
     except Exception as exc:
-        error_msg = str(exc)
+        error_msg: str = str(exc)
         if "28841002" in error_msg or "expired" in error_msg.lower():
             return (
                 False,
@@ -106,12 +112,14 @@ def _test_cloud_connection(api_key, api_secret, api_region):
         return False, f"Connection failed: {error_msg}", None
 
 
-def _test_local_poll(dev_id, ip, local_key, version):
+def _test_local_poll(
+    dev_id: str, ip: str, local_key: str, version: str
+) -> Tuple[bool, Any]:
     try:
-        device = tinytuya.Device(dev_id, ip, local_key)
+        device: tinytuya.Device = tinytuya.Device(dev_id, ip, local_key)
         device.set_version(float(version))
         device.set_socketTimeout(5)
-        status = device.status()
+        status: Dict[str, Any] = device.status()
         if status and status.get("dps"):
             return True, status.get("dps", {})
         if status and status.get("Error"):
@@ -121,7 +129,24 @@ def _test_local_poll(dev_id, ip, local_key, version):
         return False, str(exc)
 
 
-def run_setup():
+def _fetch_dps_mapping(cloud: tinytuya.Cloud, dev_id: str) -> Dict[str, DpsMeta]:
+    dps_mapping: Dict[str, DpsMeta] = {}
+    try:
+        dps_result: Dict[str, Any] = cloud.getdps(dev_id)
+        if dps_result and dps_result.get("result"):
+            for item in dps_result["result"].get("status", []):
+                dp_id: str = str(item.get("dp_id", ""))
+                dps_mapping[dp_id] = DpsMeta(
+                    code=item.get("code", ""),
+                    type=item.get("type", ""),
+                    values=item.get("values", ""),
+                )
+    except Exception:
+        pass
+    return dps_mapping
+
+
+def run_setup() -> List[DeviceConfig]:
     _print_header("Tuya Local Poll Setup Wizard")
 
     print("  This wizard will guide you through a one-time setup to connect")
@@ -136,7 +161,6 @@ def run_setup():
     print("  │  After setup:  poll ──local only──▶ data/     │")
     print("  └─────────────────────────────────────────────┘")
 
-    # ── Step 1: Tuya Platform Account ──────────────────────────────
     _print_step(1, "Create a Tuya Developer Account (if you don't have one)")
     print("  1. Go to: https://iot.tuya.com")
     print("  2. Sign up / Log in")
@@ -146,39 +170,37 @@ def run_setup():
     print()
     _print_warning("If you get 'plan expired' errors later, create a fresh account.")
 
-    # ── Step 2: Get Credentials ────────────────────────────────────
     _print_step(2, "Enter your Tuya Cloud API credentials")
     print("  Find these on your project dashboard at iot.tuya.com")
     print()
 
-    api_key = _prompt_required("Access ID  (Client ID)")
-    api_secret = _prompt_required("Access Secret (Client Secret)")
+    api_key: str = _prompt_required("Access ID  (Client ID)")
+    api_secret: str = _prompt_required("Access Secret (Client Secret)")
 
     print()
     print("  Common regions:")
     print("    in  = India    eu  = Europe    us  = America")
     print("    cn  = China    aw  = West America")
-    api_region = _prompt("Region", "in")
+    api_region: str = _prompt("Region", "in")
 
-    # ── Step 3: Test Connection ────────────────────────────────────
     _print_step(3, "Testing cloud connection...")
+    ok: bool
+    msg: str
+    client: Optional[tinytuya.Cloud]
     ok, msg, client = _test_cloud_connection(api_key, api_secret, api_region)
     if ok:
         _print_success(msg)
     else:
         _print_error(msg)
         if "expired" in msg.lower():
-            _print_warning(
-                "Create a new account at https://iot.tuya.com and try again."
-            )
+            _print_warning("Create a new account at https://iot.tuya.com and try again.")
         print()
-        retry = input("  Fix credentials and retry? (Y/n): ").strip().lower()
+        retry: str = input("  Fix credentials and retry? (Y/n): ").strip().lower()
         if retry != "n":
             return run_setup()
         _print_error("Setup cancelled.")
         sys.exit(1)
 
-    # ── Step 4: Link App Account ───────────────────────────────────
     _print_step(4, "Link your Smart Life / Tuya app to this project")
     print("  On the Tuya IoT Platform website:")
     print()
@@ -194,19 +216,16 @@ def run_setup():
     print()
     input("  Press Enter once you've linked your app account...")
 
-    # ── Step 5: Fetch Devices ──────────────────────────────────────
     _print_step(5, "Fetching device details from cloud...")
 
-    from dotenv import load_dotenv
-    import os
     os.environ["CLIENTKEY"] = api_key
     os.environ["CLIENTSECRET"] = api_secret
     os.environ["APIREGION"] = api_region
 
     from . import api_client
 
-    devices = api_client.get_device_details()
-    if not devices:
+    devices_raw: List[Dict[str, Any]] = api_client.get_device_details()
+    if not devices_raw:
         _print_error("No devices found!")
         print()
         _print_info("Possible reasons:")
@@ -220,112 +239,83 @@ def run_setup():
         _print_error("Setup cancelled.")
         sys.exit(1)
 
-    _print_success(f"Found {len(devices)} device(s):")
-    for dev in devices:
-        name = dev.get("name", dev.get("id"))
-        model = dev.get("model", "?")
-        dev_id = dev.get("id", "?")
+    _print_success(f"Found {len(devices_raw)} device(s):")
+    for dev in devices_raw:
+        name: str = dev.get("name", dev.get("id"))
+        model: str = dev.get("model", "?")
+        dev_id: str = dev.get("id", "?")
         print(f"    • {name} ({model}) — {dev_id}")
 
-    # ── Step 6: Scan Local Network ─────────────────────────────────
     _print_step(6, "Scanning local network for device IPs...")
     print("  This takes ~18 seconds. Make sure devices are powered on")
     print("  and connected to the same WiFi network.")
     print()
 
-    scan_results = tinytuya.deviceScan(verbose=False, poll=False)
+    scan_results: Optional[Dict[str, Any]] = tinytuya.deviceScan(verbose=False, poll=False)
 
-    ip_map = {}
+    ip_map: Dict[str, Dict[str, str]] = {}
     if scan_results:
         for ip, info in scan_results.items():
-            gw_id = info.get("gwId", "")
+            gw_id: str = info.get("gwId", "")
             if gw_id:
                 ip_map[gw_id] = {
                     "ip": ip,
                     "version": str(info.get("version", "3.3")),
                 }
 
-    # ── Step 7: Save Everything ────────────────────────────────────
     _print_step(7, "Saving device data...")
 
-    _save_env({
-        "CLIENTKEY": api_key,
-        "CLIENTSECRET": api_secret,
-        "APIREGION": api_region,
-    })
+    _save_env({"CLIENTKEY": api_key, "CLIENTSECRET": api_secret, "APIREGION": api_region})
     _save_env_example()
     _print_success(f"Credentials saved to {ENV_FILE}")
 
-    import json
     os.makedirs("data", exist_ok=True)
 
-    enriched = []
-    cloud = api_client.create_tuya_client()
+    cloud: tinytuya.Cloud = api_client.create_tuya_client()
+    enriched: List[DeviceConfig] = []
 
-    for dev in devices:
+    for dev in devices_raw:
         dev_id = dev.get("id", "")
-        scan_info = ip_map.get(dev_id, {})
+        scan_info: Dict[str, str] = ip_map.get(dev_id, {})
+        dps_mapping: Dict[str, DpsMeta] = _fetch_dps_mapping(cloud, dev_id)
 
-        dps_mapping = {}
-        try:
-            dps_result = cloud.getdps(dev_id)
-            if dps_result and dps_result.get("result"):
-                for item in dps_result["result"].get("status", []):
-                    dp_id = str(item.get("dp_id", ""))
-                    dps_mapping[dp_id] = {
-                        "code": item.get("code", ""),
-                        "type": item.get("type", ""),
-                        "values": item.get("values", ""),
-                    }
-        except Exception:
-            pass
-
-        ip_addr = scan_info.get("ip", "")
-        version = scan_info.get("version", str(dev.get("version", "3.3")))
-        name = dev.get("name", dev_id)
-        local_key = dev.get("local_key", dev.get("key", ""))
-
-        entry = {
-            "id": dev_id,
-            "name": name,
-            "local_key": local_key,
-            "ip_address": ip_addr,
-            "version": version,
-            "model": dev.get("model", ""),
-            "product_name": dev.get("product_name", ""),
-            "category": dev.get("category", ""),
-            "mac": dev.get("mac", ""),
-            "dps_mapping": dps_mapping,
-        }
+        entry: DeviceConfig = DeviceConfig(
+            id=dev_id,
+            name=dev.get("name", dev_id),
+            local_key=dev.get("local_key", dev.get("key", "")),
+            ip_address=scan_info.get("ip", ""),
+            version=scan_info.get("version", str(dev.get("version", "3.3"))),
+            model=dev.get("model", ""),
+            product_name=dev.get("product_name", ""),
+            category=dev.get("category", ""),
+            mac=dev.get("mac", ""),
+            dps_mapping=dps_mapping,
+        )
         enriched.append(entry)
 
-        if ip_addr:
-            _print_success(f"{name} → {ip_addr}")
+        if entry.ip_address:
+            _print_success(f"{entry.name} → {entry.ip_address}")
         else:
-            _print_warning(f"{name} → no IP found (offline?)")
+            _print_warning(f"{entry.name} → no IP found (offline?)")
 
-    devices_file = os.path.join("data", "devices.json")
+    devices_file: str = os.path.join("data", "devices.json")
     with open(devices_file, "w", encoding="utf-8") as f:
-        json.dump(enriched, f, indent=2)
+        json.dump([d.to_dict() for d in enriched], f, indent=2)
         f.write("\n")
     _print_success(f"Device data saved to {devices_file}")
 
-    # ── Step 8: Test Local Poll ────────────────────────────────────
     _print_step(8, "Testing local device polling...")
     for entry in enriched:
-        if not all([entry["id"], entry["ip_address"], entry["local_key"]]):
-            _print_warning(f"{entry['name']} — skipping (missing IP/key)")
+        if not all([entry.id, entry.ip_address, entry.local_key]):
+            _print_warning(f"{entry.name} — skipping (missing IP/key)")
             continue
 
-        ok, result = _test_local_poll(
-            entry["id"], entry["ip_address"], entry["local_key"], entry["version"]
-        )
+        ok, result = _test_local_poll(entry.id, entry.ip_address, entry.local_key, entry.version)
         if ok:
-            _print_success(f"{entry['name']} — responding with {len(result)} data point(s)")
+            _print_success(f"{entry.name} — responding with {len(result)} data point(s)")
         else:
-            _print_warning(f"{entry['name']} — {result}")
+            _print_warning(f"{entry.name} — {result}")
 
-    # ── Done ───────────────────────────────────────────────────────
     _print_header("Setup Complete!")
 
     print("  You can now DISCONNECT from the internet.")
@@ -337,3 +327,5 @@ def run_setup():
     print()
     print("  Data is saved to: data/readings/<device_name>.jsonl")
     print()
+
+    return enriched

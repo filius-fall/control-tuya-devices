@@ -1,17 +1,17 @@
 import os
+from typing import Dict, Optional
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-CLIENTKEY = os.getenv("CLIENTKEY")
-CLIENTSECRET = os.getenv("CLIENTSECRET")
-APIREGION = os.getenv("APIREGION")
+CLIENTKEY: Optional[str] = os.getenv("CLIENTKEY")
+CLIENTSECRET: Optional[str] = os.getenv("CLIENTSECRET")
+APIREGION: Optional[str] = os.getenv("APIREGION")
 
 
-def require_tuya_settings():
-    """Return Tuya credentials or raise a clear configuration error."""
-    missing = [
+def require_tuya_settings() -> Dict[str, str]:
+    missing: list[str] = [
         name
         for name, value in {
             "CLIENTKEY": CLIENTKEY,
@@ -26,7 +26,7 @@ def require_tuya_settings():
         )
 
     return {
-        "api_key": CLIENTKEY,
-        "api_secret": CLIENTSECRET,
-        "api_region": APIREGION,
+        "api_key": CLIENTKEY or "",
+        "api_secret": CLIENTSECRET or "",
+        "api_region": APIREGION or "",
     }

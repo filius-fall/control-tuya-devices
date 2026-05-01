@@ -1,10 +1,14 @@
+from __future__ import annotations
+
 import sys
+from typing import List
 
 from . import setup as setup_wizard
-from . import local
+from .local import load_devices, poll_all_once, poll_continuously, cmd_list, stream_readings
+from .models import DeviceConfig, PollResult
 
 
-def main():
+def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: uv run python run.py <command> [options]")
         print()
@@ -15,15 +19,15 @@ def main():
         print("  list            List saved devices")
         sys.exit(1)
 
-    command = sys.argv[1].lower()
+    command: str = sys.argv[1].lower()
 
     if command == "setup":
         setup_wizard.run_setup()
     elif command == "poll":
-        devices = local.load_devices()
+        devices: List[DeviceConfig] = load_devices()
         print(f"Loaded {len(devices)} device(s) from local cache")
 
-        interval = None
+        interval: int | None = None
         if len(sys.argv) > 2:
             try:
                 interval = int(sys.argv[2])
@@ -32,12 +36,13 @@ def main():
                 sys.exit(1)
 
         if interval is not None:
-            local.poll_continuously(interval_seconds=interval, devices=devices)
+            poll_continuously(interval_seconds=interval, devices=devices)
         else:
-            results = local.poll_all_once(devices)
-            print(f"Polled {len(results)} device(s)")
+            results: List[PollResult] = poll_all_once(devices)
+            online: int = sum(1 for r in results if r.reading.online)
+            print(f"Polled {len(results)} device(s), {online} online")
     elif command == "list":
-        local.cmd_list()
+        cmd_list()
     else:
         print(f"Unknown command: {command}")
         print("Use 'setup', 'poll', or 'list'")

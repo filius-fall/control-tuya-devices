@@ -238,6 +238,17 @@ An Ansible role is in `deploy/ansible/roles/tuya_exporter/`. Import it into your
     - role: tuya_exporter
 ```
 
+## Tested Devices
+
+These devices have been confirmed working with local-only polling:
+
+| Device | Category | Protocol Version | Notes |
+|--------|----------|-----------------|-------|
+| **Zebronics ZEB-SP116** | Smart Plug | v3.4 | Uses numeric DPS codes (1, 20, 22, 25). Fully working — power, current, voltage, toggle. |
+| **10Amp Smart Plug** (generic) | Smart Plug | v3.3 | Standard string DPS codes (`cur_power`, `cur_current`, `cur_voltage`). Fully working. |
+
+PRs welcome to add more devices. If you test a new device, please include the protocol version and whether it uses numeric or string DPS codes.
+
 ## Project Structure
 
 ```

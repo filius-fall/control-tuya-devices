@@ -42,7 +42,7 @@ class DeviceConfig:
             product_name=data.get("product_name", ""),
             category=data.get("category", ""),
             mac=data.get("mac", ""),
-            dps_mapping={k: DpsMeta(**v) for k, v in mapping.items()} if isinstance(mapping, dict) else {},
+            dps_mapping={k: dict(v) for k, v in mapping.items()} if isinstance(mapping, dict) else {},
         )
 
     def to_dict(self) -> Dict[str, Any]:

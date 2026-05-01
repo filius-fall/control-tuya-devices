@@ -12,6 +12,7 @@ from . import logger
 from .models import (
     DeviceConfig,
     DeviceStatus,
+    DpsMeta,
     PollResult,
     PowerReading,
 )
@@ -78,16 +79,28 @@ def poll_device(
     ip_address: str,
     local_key: str,
     version: str = "3.3",
+    retries: int = 2,
 ) -> Optional[Dict[str, Any]]:
-    device: tinytuya.Device = tinytuya.Device(dev_id, ip_address, local_key)
-    device.set_version(float(version))
-    device.set_socketTimeout(5)
-    try:
-        status: Dict[str, Any] = device.status()
-        return status
-    except Exception as exc:
-        logger.logs.error("Failed to poll device locally", device_id=dev_id, error=str(exc))
-        return None
+    versions_to_try: List[str] = [version]
+    for v in ("3.3", "3.4", "3.5", "3.1"):
+        if v not in versions_to_try:
+            versions_to_try.append(v)
+
+    for attempt in range(retries):
+        for v in versions_to_try:
+            device: tinytuya.Device = tinytuya.Device(dev_id, ip_address, local_key)
+            device.set_version(float(v))
+            device.set_socketTimeout(5)
+            try:
+                status: Dict[str, Any] = device.status()
+                if status and status.get("dps"):
+                    return status
+                if status and status.get("Error") and attempt < retries - 1:
+                    continue
+                return status
+            except Exception:
+                continue
+    return None
 
 
 def extract_power_dps(
@@ -308,3 +321,110 @@ def cmd_list() -> None:
     for dev in devices:
         print(f"{dev.name[:24]:<25} {dev.ip_address:<16} {dev.id:<22} {dev.model}")
     print(f"\n{len(devices)} device(s) found in {DEVICES_FILE}")
+
+
+def refresh_devices() -> List[DeviceConfig]:
+    from . import api_client
+
+    print("Refreshing device data from cloud + local scan...")
+
+    devices_raw: List[Dict[str, Any]] = api_client.get_device_details()
+    if not devices_raw:
+        print("No devices found on cloud. Is your app account linked?")
+        return []
+
+    print("Scanning local network...")
+    scan_results: Optional[Dict[str, Any]] = tinytuya.deviceScan(verbose=False, poll=False)
+
+    ip_map: Dict[str, Dict[str, str]] = {}
+    if scan_results:
+        for ip, info in scan_results.items():
+            gw_id: str = info.get("gwId", "")
+            if gw_id:
+                ip_map[gw_id] = {"ip": ip, "version": str(info.get("version", "3.3"))}
+
+    cloud: tinytuya.Cloud = api_client.create_tuya_client()
+    updated: List[DeviceConfig] = []
+
+    for dev in devices_raw:
+        dev_id: str = dev.get("id", "")
+        scan_info: Dict[str, str] = ip_map.get(dev_id, {})
+
+        dps_mapping: Dict[str, DpsMeta] = {}
+        try:
+            dps_result = cloud.getdps(dev_id)
+            if dps_result and dps_result.get("result"):
+                for item in dps_result["result"].get("status", []):
+                    dp_id = str(item.get("dp_id", ""))
+                    dps_mapping[dp_id] = {
+                        "code": item.get("code", ""),
+                        "type": item.get("type", ""),
+                        "values": item.get("values", ""),
+                    }
+        except Exception as exc:
+            logger.logs.warning("Could not fetch DPS mapping", device_id=dev_id, error=str(exc))
+
+        entry: DeviceConfig = DeviceConfig(
+            id=dev_id,
+            name=dev.get("name", dev_id),
+            local_key=dev.get("local_key", dev.get("key", "")),
+            ip_address=scan_info.get("ip", ""),
+            version=scan_info.get("version", str(dev.get("version", "3.3"))),
+            model=dev.get("model", ""),
+            product_name=dev.get("product_name", ""),
+            category=dev.get("category", ""),
+            mac=dev.get("mac", ""),
+            dps_mapping=dps_mapping,
+        )
+        updated.append(entry)
+        ip_str = entry.ip_address or "no IP"
+        print(f"  ✓ {entry.name} → {ip_str} (key: {entry.local_key[:4]}...)")
+
+    with open(DEVICES_FILE, "w", encoding="utf-8") as f:
+        json.dump([d.to_dict() for d in updated], f, indent=2)
+        f.write("\n")
+
+    print(f"\nRefreshed {len(updated)} device(s). Saved to {DEVICES_FILE}")
+    return updated
+
+
+def scan_devices() -> List[DeviceConfig]:
+    print("Scanning local network for Tuya devices (no cloud API needed)...")
+    print()
+
+    scan_results: Optional[Dict[str, Any]] = tinytuya.deviceScan(verbose=False, poll=False)
+
+    devices: List[DeviceConfig] = load_devices()
+    updated: bool = False
+
+    ip_map: Dict[str, Dict[str, str]] = {}
+    if scan_results:
+        for ip, info in scan_results.items():
+            gw_id: str = info.get("gwId", "")
+            if gw_id:
+                ip_map[gw_id] = {"ip": ip, "version": str(info.get("version", "3.3"))}
+
+    for dev in devices:
+        scan_info: Dict[str, str] = ip_map.get(dev.id, {})
+        new_ip: str = scan_info.get("ip", "")
+        new_ver: str = scan_info.get("version", dev.version)
+
+        if new_ip and new_ip != dev.ip_address:
+            print(f"  {dev.name}: {dev.ip_address} → {new_ip} (IP updated)")
+            dev.ip_address = new_ip
+            dev.version = new_ver
+            updated = True
+        elif new_ip:
+            print(f"  {dev.name}: {new_ip} (unchanged)")
+        else:
+            print(f"  {dev.name}: not found on network (offline?)")
+
+    if updated:
+        with open(DEVICES_FILE, "w", encoding="utf-8") as f:
+            json.dump([d.to_dict() for d in devices], f, indent=2)
+            f.write("\n")
+        print(f"\nUpdated IPs saved to {DEVICES_FILE}")
+    else:
+        print("\nNo IP changes detected.")
+
+    return devices

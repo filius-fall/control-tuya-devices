@@ -136,11 +136,11 @@ def _fetch_dps_mapping(cloud: tinytuya.Cloud, dev_id: str) -> Dict[str, DpsMeta]
         if dps_result and dps_result.get("result"):
             for item in dps_result["result"].get("status", []):
                 dp_id: str = str(item.get("dp_id", ""))
-                dps_mapping[dp_id] = DpsMeta(
-                    code=item.get("code", ""),
-                    type=item.get("type", ""),
-                    values=item.get("values", ""),
-                )
+                dps_mapping[dp_id] = {
+                    "code": item.get("code", ""),
+                    "type": item.get("type", ""),
+                    "values": item.get("values", ""),
+                }
     except Exception:
         pass
     return dps_mapping

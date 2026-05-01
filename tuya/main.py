@@ -4,7 +4,7 @@ import sys
 from typing import List
 
 from . import setup as setup_wizard
-from .local import load_devices, poll_all_once, poll_continuously, cmd_list, stream_readings
+from .local import load_devices, poll_all_once, poll_continuously, cmd_list, stream_readings, refresh_devices, scan_devices
 from .models import DeviceConfig, PollResult
 
 
@@ -14,6 +14,8 @@ def main() -> None:
         print()
         print("Commands:")
         print("  setup           Interactive setup wizard (needs internet, one-time)")
+        print("  refresh         Re-fetch keys + IPs from cloud (needs internet)")
+        print("  scan            Update device IPs via local scan (no internet needed)")
         print("  poll            Poll all devices once (local only)")
         print("  poll <seconds>  Poll all devices continuously at interval (local only)")
         print("  list            List saved devices")
@@ -23,6 +25,10 @@ def main() -> None:
 
     if command == "setup":
         setup_wizard.run_setup()
+    elif command == "refresh":
+        refresh_devices()
+    elif command == "scan":
+        scan_devices()
     elif command == "poll":
         devices: List[DeviceConfig] = load_devices()
         print(f"Loaded {len(devices)} device(s) from local cache")
@@ -45,7 +51,7 @@ def main() -> None:
         cmd_list()
     else:
         print(f"Unknown command: {command}")
-        print("Use 'setup', 'poll', or 'list'")
+        print("Use 'setup', 'refresh', 'scan', 'poll', or 'list'")
         sys.exit(1)
 
 

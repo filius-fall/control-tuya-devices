@@ -16,6 +16,8 @@ from .local import (
     stream_readings,
     extract_power_dps,
     poll_device,
+    refresh_devices,
+    scan_devices,
 )
 from .api_client import create_tuya_client, get_device_details
 from .setup import run_setup
@@ -39,4 +41,6 @@ __all__ = [
     "create_tuya_client",
     "get_device_details",
     "run_setup",
+    "refresh_devices",
+    "scan_devices",
 ]

@@ -155,43 +155,6 @@ def _resolve_room(dev_id: str) -> str:
     return room_config.resolve_room(dev_id, device_store.get_cached_room(dev_id))
 
 
-def _extract_dps_from_status(status: dict | None) -> dict | None:
-    """Extract DPs from a Tuya Cloud status response, or None if offline."""
-    if not status or not isinstance(status, dict):
-        return None
-
-    # API error / device explicitly offline
-    if not status.get("success", True):
-        return None
-
-    result = status.get("result")
-    if result is None:
-        return None
-
-    # Result is a list of {code, value} — the common format
-    if isinstance(result, list):
-        return {
-            item["code"]: item.get("value")
-            for item in result
-            if isinstance(item, dict) and "code" in item
-        }
-
-    # Result is a dict — may contain an "online" flag and "status" array
-    if isinstance(result, dict):
-        if result.get("online") is False:
-            return None
-        status_list = result.get("status") or result.get("result") or []
-        if isinstance(status_list, list):
-            return {
-                item["code"]: item.get("value")
-                for item in status_list
-                if isinstance(item, dict) and "code" in item
-            }
-        return result
-
-    return None
-
-
 def _mark_device_offline(device_id: str) -> None:
     """Set online state to offline and force usage gauges to zero."""
     ONLINE.labels(**_metric_labels(device_id)).set(0)
@@ -448,47 +411,49 @@ def refresh():
         return Response(str(exc), status=503, mimetype="text/plain")
 
 
-def _get_switch_codes(device_id: str) -> list[str]:
-    """Return candidate switch DP codes without polling the cloud."""
-    status = device_store.get_status(device_id) or {}
-    codes = []
-    for code in ("switch_1", "switch", "led_switch"):
-        if code not in codes:
-            codes.append(code)
-    dps = status.get("dps") or {}
-    if isinstance(dps, dict):
-        for code in ("switch_1", "switch", "led_switch"):
-            if code in dps and code not in codes:
-                codes.append(code)
-    return codes
-
-
 def _try_toggle(device_id: str, state: bool) -> None:
-    """Send a toggle command, trying fallback switch codes on failure."""
-    codes = _get_switch_codes(device_id)
-    if not codes:
-        raise RuntimeError("No switch codes found for device")
+    """Toggle a device on/off locally via tinytuya (no cloud API)."""
+    dev = None
+    for d in device_store.get_devices():
+        if d.get("id") == device_id:
+            dev = d
+            break
+
+    if not dev:
+        raise RuntimeError(f"Device {device_id} not found in store")
+
+    local_key = dev.get("local_key") or dev.get("key")
+    ip = dev.get("ip") or dev.get("last_ip")
+    version = dev.get("version") or "3.3"
+
+    if not local_key or not ip:
+        raise RuntimeError(f"Device {device_id} missing local_key or IP")
+
+    switch_codes = ["switch_1", "switch", "led_switch"]
 
     last_error = None
-    for code in codes:
+    for code in switch_codes:
         try:
-            api_client.send_device_command(
-                device_id, [{"code": code, "value": bool(state)}]
+            local_client.toggle_device_local(
+                device_id, local_key, ip, state, version, switch_code=code
             )
             log.info(
-                "Toggled device", device_id=device_id, state=bool(state), code=code
+                "Toggled device locally",
+                device_id=device_id,
+                state=state,
+                code=code,
             )
             return
         except Exception as exc:
             last_error = exc
             log.warning(
-                "Toggle attempt failed",
+                "Local toggle attempt failed",
                 device_id=device_id,
                 code=code,
                 error=str(exc),
             )
 
-    raise last_error or RuntimeError("All toggle attempts failed")
+    raise last_error or RuntimeError("All local toggle attempts failed")
 
 
 @flask_app.route("/toggle/<device_id>", methods=["POST"])

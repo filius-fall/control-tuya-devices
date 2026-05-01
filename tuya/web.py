@@ -50,7 +50,7 @@ from .rich_output import (
 log = logger.logs
 
 POLL_INTERVAL = int(os.getenv("TUYA_POLL_INTERVAL", "30"))
-DISCOVER_INTERVAL = int(os.getenv("TUYA_DISCOVER_INTERVAL", "0"))
+DISCOVER_INTERVAL = int(os.getenv("TUYA_DISCOVER_INTERVAL", "300"))
 LOCAL_KEY_REFRESH_COOLDOWN = int(os.getenv("TUYA_KEY_REFRESH_COOLDOWN", "3600"))
 
 REGISTRY = CollectorRegistry()

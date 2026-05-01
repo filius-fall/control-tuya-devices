@@ -131,6 +131,14 @@ Tuya devices get their IP from your router's DHCP. If the router reboots, device
 - Rotate or archive old files periodically
 - `data/devices.json` contains your local keys — **do not commit this to public repos** (already in `.gitignore`)
 
+### Device Behavior (Tuya quirks)
+
+- Some Tuya devices stop reporting `current` and `power` DPs if the value hasn't changed significantly — voltage usually keeps reporting
+- Polling too frequently (< 10s) can cause devices to throttle or drop power data
+- Recommended polling interval: **30–60 seconds** for consistent readings
+- Devices may return error 914 or 904 intermittently — the code auto-retries with different protocol versions
+- Power data (voltage, current, watts) is only reported while the device is ON and has something plugged in
+
 ## Integration with Other Code
 
 ```python
@@ -161,6 +169,90 @@ for r in results:
 - `PowerReading` — typed reading: `voltage_v`, `current_ma`, `power_w`, `energy_wh`, `online`
 - `PollResult` — a `PowerReading` + optional power event dict
 - `DeviceStatus` — online/offline tracking state
+
+## Prometheus / Grafana / Dashboard Integration
+
+The JSONL output is designed to be easy to pipe into time-series databases and dashboards. Here are common setups:
+
+### Option 1: Export to Prometheus via pushgateway
+
+```python
+from tuya import load_devices, stream_readings
+import requests
+
+PUSHGATEWAY = "http://localhost:9091/metrics/job/tuya"
+
+devices = load_devices()
+
+for results in stream_readings(interval_seconds=60, devices=devices):
+    metrics = ""
+    for r in results:
+        rd = r.reading
+        labels = f'device="{rd.device_name}",ip="{rd.ip}"'
+        if rd.voltage_v is not None:
+            metrics += f'tuya_voltage_volts{{{labels}}} {rd.voltage_v}\n'
+        if rd.current_ma is not None:
+            metrics += f'tuya_current_ma{{{labels}}} {rd.current_ma}\n'
+        if rd.power_w is not None:
+            metrics += f'tuya_power_watts{{{labels}}} {rd.power_w}\n'
+        if rd.energy_wh is not None:
+            metrics += f'tuya_energy_wh{{{labels}}} {rd.energy_wh}\n'
+        metrics += f'tuya_online{{{labels}}} {1 if rd.online else 0}\n'
+
+    requests.post(PUSHGATEWAY, data=metrics)
+```
+
+### Option 2: InfluxDB / TimescaleDB via JSONL tail
+
+```bash
+# Tail the JSONL file and pipe to influxdb
+tail -F data/readings/Zebronics_ZEB-SP116.jsonl | \
+  while read line; do
+    ts=$(echo "$line" | jq -r '.timestamp')
+    device=$(echo "$line" | jq -r '.data.device_name')
+    power=$(echo "$line" | jq -r '.data.power_w // "null"')
+    voltage=$(echo "$line" | jq -r '.data.voltage_v // "null"')
+    influx write \
+      --bucket tuya \
+      "power,device=$device voltage=$voltage,power=$power,current=$current $ts"
+  done
+```
+
+### Option 3: Custom HTTP endpoint
+
+```python
+from tuya import load_devices, stream_readings
+import requests
+
+API_URL = "https://your-dashboard.example.com/api/readings"
+
+devices = load_devices()
+
+for results in stream_readings(interval_seconds=60, devices=devices):
+    for r in results:
+        if r.reading.online:
+            requests.post(API_URL, json=r.reading.to_dict())
+```
+
+### Exposed Metrics (for dashboards)
+
+| Metric | Field | Unit | Description |
+|--------|-------|------|-------------|
+| Voltage | `voltage_v` | Volts (V) | Line voltage, e.g. 240.8 |
+| Current | `current_ma` | Milliamps (mA) | Load current |
+| Power | `power_w` | Watts (W) | Real-time power consumption |
+| Energy | `energy_wh` | Watt-hours (Wh) | Cumulative energy consumption |
+| Status | `status` | `online`/`offline` | Device reachability |
+| Outage | `outage_duration_seconds` | Seconds | Duration of power outage (in events) |
+
+### Recommended Polling Interval
+
+| Interval | Use case |
+|----------|----------|
+| 10s | High-resolution monitoring (devices may throttle power data) |
+| 30s | Good balance for most devices |
+| 60s | Recommended for long-term logging and dashboards |
+| 300s | Low-frequency energy tracking |
 
 ## Troubleshooting
 

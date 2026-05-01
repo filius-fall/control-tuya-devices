@@ -204,6 +204,16 @@ def _poll_device(dev: dict) -> dict:
 
     ONLINE.labels(**_metric_labels(dev_id)).set(1)
 
+    # Normalize numeric DPS codes (e.g. Zebronics ZEB-SP116 uses 1,20,22,25)
+    # to standard string codes expected by the rest of the code.
+    _norm = {}
+    numeric_map = {"1": "switch_1", "20": "cur_voltage", "22": "cur_current", "25": "cur_power"}
+    for k, v in dps.items():
+        sk = str(k)
+        if sk in numeric_map and numeric_map[sk] not in dps:
+            _norm[numeric_map[sk]] = v
+    dps = {**_norm, **dps}
+
     # Use key-in-dict check so a literal False value is not skipped by `or`.
     switch_state: bool | None = None
     for code in ("switch_1", "switch", "led_switch"):
@@ -429,7 +439,8 @@ def _try_toggle(device_id: str, state: bool) -> None:
     if not local_key or not ip:
         raise RuntimeError(f"Device {device_id} missing local_key or IP")
 
-    switch_codes = ["switch_1", "switch", "led_switch"]
+    # Try string codes first, then numeric code 1 (common on many plugs)
+    switch_codes = ["switch_1", "switch", "led_switch", 1]
 
     last_error = None
     for code in switch_codes:

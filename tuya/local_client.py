@@ -24,13 +24,25 @@ def get_device_status_local(
             d.set_socketPersistent(False)
             d.set_socketTimeout(5)
 
+            # Try device.status() first — returns full DPS on many devices
+            data = d.status()
+            if data and "dps" in data:
+                log.info(
+                    "Local poll succeeded (status)",
+                    device_id=device_id,
+                    ip=ip_address,
+                    version=v,
+                )
+                return {"dps": data["dps"]}
+
+            # Fallback to manual DP_QUERY payload
             payload = d.generate_payload(tinytuya.DP_QUERY)
             d.send(payload)
             data = d.receive()
 
             if data and "dps" in data:
                 log.info(
-                    "Local poll succeeded",
+                    "Local poll succeeded (dp_query)",
                     device_id=device_id,
                     ip=ip_address,
                     version=v,
@@ -78,8 +90,10 @@ def toggle_device_local(
             d.set_socketPersistent(False)
             d.set_socketTimeout(5)
 
+            # Support both string codes ("switch_1") and numeric codes (1)
+            code_key = switch_code if isinstance(switch_code, int) else switch_code
             payload = d.generate_payload(
-                tinytuya.CONTROL, {switch_code: state}
+                tinytuya.CONTROL, {code_key: state}
             )
             d.send(payload)
             data = d.receive()

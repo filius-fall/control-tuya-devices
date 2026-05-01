@@ -247,6 +247,13 @@ These devices have been confirmed working with local-only polling:
 | **Zebronics ZEB-SP116** | Smart Plug | v3.4 | Uses numeric DPS codes (1, 20, 22, 25). Fully working — power, current, voltage, toggle. |
 | **10Amp Smart Plug** (generic) | Smart Plug | v3.3 | Standard string DPS codes (`cur_power`, `cur_current`, `cur_voltage`). Fully working. |
 
+### Requested / Not Yet Tested
+
+| Device | Category | Status |
+|--------|----------|--------|
+| **Zebronics Smart Switches** | Wall Switch | Awaiting test — these are currently cheaper. |
+| **Wipro Bulbs** | Smart Bulb | Awaiting test. |
+
 PRs welcome to add more devices. If you test a new device, please include the protocol version and whether it uses numeric or string DPS codes.
 
 ## Project Structure

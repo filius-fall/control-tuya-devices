@@ -37,6 +37,7 @@ from . import local_client
 from . import room_config
 from . import device_store
 from .energy_tracker import EnergyTracker
+from .outage import track_outage
 from .rich_output import (
     _extract_power_dps,
     _fmt_power,
@@ -229,6 +230,7 @@ def _poll_device(dev: dict) -> dict:
 
     if not dps:
         _mark_device_offline(dev_id)
+        track_outage(dev_id, name, is_online=False)
         return {
             "id": dev_id,
             "name": name,
@@ -297,8 +299,9 @@ def _poll_device(dev: dict) -> dict:
         SWITCH.labels(**_metric_labels(dev_id)).set(float("nan"))
 
     power_dps = _extract_power_dps(dps)
+    outage_event = track_outage(dev_id, name, is_online=True)
 
-    return {
+    result = {
         "id": dev_id,
         "name": name,
         "room": room,
@@ -310,6 +313,9 @@ def _poll_device(dev: dict) -> dict:
         "voltage": _fmt_voltage(power_dps.get("voltage")),
         "energy": _fmt_energy(power_dps.get("energy")),
     }
+    if outage_event:
+        result["event"] = outage_event
+    return result
 
 
 def _update_energy(device_id: str, raw: float | None) -> None:
@@ -326,6 +332,8 @@ def _update_energy(device_id: str, raw: float | None) -> None:
 
 
 def _poll_all():
+    from . import webhook
+
     devices = device_store.get_devices()
     for dev in devices:
         dev_id = dev.get("id", "")
@@ -341,6 +349,12 @@ def _poll_all():
                 "source": "—",
             }
         device_store.set_status(status)
+
+    statuses = device_store.get_statuses()
+    if statuses:
+        stats = webhook.push_webhooks(statuses)
+        if stats["sent"] > 0 or stats["failed"] > 0:
+            log.info("Webhook delivery", sent=stats["sent"], failed=stats["failed"])
 
 
 def _polling_loop():

@@ -4,7 +4,6 @@ Tuya Cloud keeps device logs for a limited window (typically 7–30 days).
 This module queries DP-report events (evtype=7) to build a recent history.
 """
 
-from datetime import datetime, timezone, timedelta
 
 from . import api_client
 from . import logger

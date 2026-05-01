@@ -1,9 +1,10 @@
 import argparse
+import signal
 import sys
+import time
 
 from rich.console import Console
 
-from tuya.main import run_once
 from tuya import device_store
 from tuya import setup as setup_module
 from tuya import top as top_module
@@ -138,6 +139,85 @@ def cmd_history(args):
         sys.exit(1)
 
 
+def cmd_serve(args):
+    """Run always-on polling service with webhook push (no Flask/gunicorn)."""
+    import os
+    from tuya import webhook
+    from tuya.main import _collect_device_reading
+    from tuya import devices as device_config
+    from tuya.outage import track_outage
+
+    interval = args.interval or int(os.getenv("TUYA_POLL_INTERVAL", "60"))
+
+    def _signal_handler(signum, frame):
+        console.print("\n[dim]Shutting down...[/dim]")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+
+    switches = device_config.load_switches()
+    if not switches:
+        print_error("No devices configured. Run 'tuya setup'.")
+        sys.exit(1)
+
+    webhook_urls = [u.strip() for u in os.getenv("WEBHOOK_URLS", "").split(",") if u.strip()]
+    console.print("[cyan]Tuya Polling Service[/cyan]")
+    console.print(f"  Devices:    {len(switches)}")
+    console.print(f"  Interval:   {interval}s")
+    console.print(f"  Webhooks:   {len(webhook_urls)}")
+    for url in webhook_urls:
+        console.print(f"    → {url}")
+    console.print()
+    console.print("[dim]Press Ctrl+C to stop.[/dim]\n")
+
+    cycle = 0
+    while True:
+        cycle += 1
+        try:
+            statuses = []
+            for sw in switches:
+                dev_id = sw.get("id")
+                name = sw.get("name", "unknown")
+                reading = _collect_device_reading(sw)
+                if reading:
+                    status = {
+                        "id": dev_id,
+                        "name": name,
+                        "online": True,
+                        "source": reading.get("source", "local"),
+                        "dps": reading.get("dps", {}),
+                    }
+                    outage_event = track_outage(dev_id, name, is_online=True)
+                    if outage_event:
+                        status["event"] = outage_event
+                else:
+                    status = {"id": dev_id, "name": name, "online": False, "source": "—"}
+                    track_outage(dev_id, name, is_online=False)
+
+                statuses.append(status)
+
+            if webhook_urls and statuses:
+                stats = webhook.push_webhooks(statuses)
+                if stats["failed"] > 0:
+                    console.print(
+                        f"[dim][#{cycle}][/dim] [red]Webhooks: {stats['sent']} sent, {stats['failed']} failed[/red]"
+                    )
+
+            for s in statuses:
+                online_str = "[green]online[/green]" if s["online"] else "[red]OFFLINE[/red]"
+                console.print(
+                    f"[dim][#{cycle}][/dim] {s['name']} {online_str}"
+                )
+
+        except KeyboardInterrupt:
+            break
+        except Exception as exc:
+            console.print(f"[red]Poll cycle failed: {exc}[/red]")
+
+        time.sleep(interval)
+
+
 def cli():
     parser = argparse.ArgumentParser(description="Tuya Smart Switch Power Monitor")
     sub = parser.add_subparsers(dest="command", help="Commands")
@@ -191,20 +271,31 @@ def cli():
         "--verbose", action="store_true", help="Show individual readings"
     )
 
+    # serve
+    p_serve = sub.add_parser(
+        "serve", help="Always-on polling service with webhook push"
+    )
+    p_serve.add_argument(
+        "--interval",
+        type=int,
+        default=None,
+        help="Poll interval in seconds (default: TUYA_POLL_INTERVAL or 60)",
+    )
+
     args = parser.parse_args()
 
     if args.command == "status":
         cmd_status()
     elif args.command == "top":
         top_module.run_top(interval=args.interval)
-    elif args.command == "metrics":
-        cmd_metrics(args)
     elif args.command == "setup":
         cmd_setup(args)
     elif args.command == "list-devices":
         cmd_list_devices(args)
     elif args.command == "history":
         cmd_history(args)
+    elif args.command == "serve":
+        cmd_serve(args)
     else:
         # Default: show help
         parser.print_help()

@@ -9,32 +9,46 @@ def get_device_status_local(
 ) -> dict | None:
     """Poll a Tuya device directly over the local network.
 
-    This usually returns ALL DPs including cur_power, cur_current, cur_voltage,
-    which the Cloud API often omits.
+    Tries multiple protocol versions on failure for robustness.
+    Returns {"dps": {...}} on success, None on failure.
     """
-    try:
-        d = tinytuya.Device(device_id, ip_address, local_key)
-        d.set_version(float(version))
-        d.set_socketPersistent(False)
-        d.set_socketTimeout(5)
+    versions_to_try = [version]
+    for v in ("3.3", "3.4", "3.5", "3.1"):
+        if v not in versions_to_try:
+            versions_to_try.append(v)
 
-        payload = d.generate_payload(tinytuya.DP_QUERY)
-        d.send(payload)
-        data = d.receive()
+    for v in versions_to_try:
+        try:
+            d = tinytuya.Device(device_id, ip_address, local_key)
+            d.set_version(float(v))
+            d.set_socketPersistent(False)
+            d.set_socketTimeout(5)
 
-        if data and "dps" in data:
-            log.info("Local poll succeeded", device_id=device_id, ip=ip_address)
-            return {"dps": data["dps"]}
-        else:
-            log.warning(
-                "Local poll returned no DPs",
+            payload = d.generate_payload(tinytuya.DP_QUERY)
+            d.send(payload)
+            data = d.receive()
+
+            if data and "dps" in data:
+                log.info(
+                    "Local poll succeeded",
+                    device_id=device_id,
+                    ip=ip_address,
+                    version=v,
+                )
+                return {"dps": data["dps"]}
+        except Exception as exc:
+            log.debug(
+                "Local poll attempt failed",
                 device_id=device_id,
                 ip=ip_address,
-                response=data,
+                version=v,
+                error=str(exc),
             )
-            return None
-    except Exception as exc:
-        log.warning(
-            "Local poll failed", device_id=device_id, ip=ip_address, error=str(exc)
-        )
-        return None
+            continue
+
+    log.warning(
+        "Local poll failed after all version attempts",
+        device_id=device_id,
+        ip=ip_address,
+    )
+    return None

@@ -1,6 +1,5 @@
 """Textual TUI for live-updating Tuya device monitoring (tuya-top)."""
 
-import asyncio
 
 from textual.app import App, ComposeResult
 from textual.containers import Vertical, Horizontal

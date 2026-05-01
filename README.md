@@ -109,7 +109,60 @@ uv run tuya list-devices --refresh
 
 # Fetch historic power data
 uv run tuya history <device_id> --hours 24 --verbose
+
+# Always-on polling with webhook push (no Flask needed)
+uv run tuya serve
+uv run tuya serve --interval 30
 ```
+
+## Webhook Push
+
+The `tuya serve` command and the Flask web app both push readings to HTTP endpoints. Configure via `.env`:
+
+```bash
+WEBHOOK_URLS="http://localhost:8080/api/readings,http://localhost:9091/metrics/job/tuya"
+WEBHOOK_TIMEOUT=10
+WEBHOOK_RETRIES=3
+WEBHOOK_RETRY_DELAY=1.0
+WEBHOOK_BATCH=true
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WEBHOOK_URLS` | *(empty)* | Comma-separated HTTP endpoints. Leave empty to disable |
+| `WEBHOOK_TIMEOUT` | `10` | HTTP request timeout in seconds |
+| `WEBHOOK_RETRIES` | `3` | Retry count per request on failure |
+| `WEBHOOK_RETRY_DELAY` | `1.0` | Seconds between retries |
+| `WEBHOOK_BATCH` | `true` | `true` = one POST per poll cycle. `false` = one POST per device |
+
+### Webhook Payload
+
+**Batch mode** (`WEBHOOK_BATCH=true`):
+
+```json
+{
+  "readings": [
+    {"id": "...", "name": "...", "online": true, "power": "166.0 W", ...}
+  ]
+}
+```
+
+**Individual mode** (`WEBHOOK_BATCH=false`):
+
+```json
+{
+  "reading": {"id": "...", "name": "...", "online": true, "power": "166.0 W", ...}
+}
+```
+
+## Power Outage Tracking
+
+The system tracks online/offline transitions and logs power outage events:
+
+- **`power_lost`** — logged when a device goes offline
+- **`power_restored`** — logged when a device comes back online, includes outage duration
+
+Outage state is persisted in SQLite and survives restarts. Events are included in webhook payloads.
 
 ## Prometheus Integration
 
@@ -165,6 +218,8 @@ All live device metrics use the stable `device_id` label. Human-readable metadat
 docker compose up -d
 ```
 
+The compose file uses `network_mode: host` — required for local device polling (tinytuya uses UDP broadcast + TCP to device IPs). This works on Linux Docker hosts only.
+
 The bundled compose file persists exporter state in `./data/tuya.db`.
 
 No separate `switches.toml` is required; device metadata is cached in SQLite.
@@ -191,9 +246,17 @@ An Ansible role is in `deploy/ansible/roles/tuya_exporter/`. Import it into your
 │   ├── api_client.py      # Tuya Cloud API wrapper
 │   ├── room_config.py     # SQLite room override storage
 │   ├── web.py             # Flask dashboard + Prometheus exporter
-│   ├── local_client.py    # Direct LAN device polling
+│   ├── local_client.py    # Direct LAN device polling (auto-retry versions)
+│   ├── webhook.py         # Push readings to HTTP endpoints
+│   ├── outage.py          # Power outage tracking (lost/restored events)
+│   ├── energy_tracker.py  # Persistent energy tracking with daily-reset handling
+│   ├── device_store.py    # SQLite device/status cache
+│   ├── state_db.py        # Shared SQLite connection
 │   ├── logger.py          # Structured logging
+│   ├── cli.py             # argparse CLI entry point
 │   ├── top.py             # Live-updating top view
+│   ├── rich_output.py     # Rich console formatting
+│   ├── history.py         # Power log summarization
 │   └── templates/
 │       ├── index.html     # Dashboard
 │       └── rooms.html     # Room management
@@ -201,6 +264,7 @@ An Ansible role is in `deploy/ansible/roles/tuya_exporter/`. Import it into your
 │   ├── docker-compose.yml
 │   └── ansible/           # Ansible role
 ├── Dockerfile
+├── docker-compose.yml
 ├── pyproject.toml
 ├── tuya.db                # Shared SQLite device/status/room/energy state (gitignored)
 └── .env                   # API credentials (gitignored)

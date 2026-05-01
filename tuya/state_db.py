@@ -61,5 +61,13 @@ def connect() -> sqlite3.Connection:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS device_online_state (
+            device_id TEXT PRIMARY KEY,
+            state_json TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
     return conn

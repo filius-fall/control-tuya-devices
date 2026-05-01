@@ -1,68 +1,85 @@
 # Control Tuya Devices
 
-## Overview
-This project interacts with the Tuya cloud to control and manage smart devices. It uses the Tuya API, and you'll need API credentials from the Tuya Developer Platform to get started.
+Collect power consumption data from Tuya devices on your local network. The cloud API is only needed **once** during setup — after that, all polling is fully local (no internet required).
 
-## Installation
+## Quick Start
 
-### Step 1: Install Poetry
-[Poetry](https://python-poetry.org/) is a dependency management and packaging tool for Python.
-
-To install Poetry, run:
+### Install
 
 ```bash
-curl -sSL https://install.python-poetry.org | python3 -
+git clone git@github.com:filius-fall/control-tuya-devices.git
+cd control-tuya-devices
+uv sync
 ```
 
-Once installed, you can verify the installation with:
+### One-Time Setup (needs internet)
 
 ```bash
-poetry --version
+uv run python run.py setup
 ```
 
-### Step 2: Install Project Dependencies
+This launches an interactive wizard that will:
+1. Ask for your Tuya Cloud API credentials
+2. Test the connection
+3. Guide you through linking your Smart Life app
+4. Scan your local network for device IPs
+5. Save everything locally
 
-1. Clone this repository:
+**After setup, you can disconnect from the internet forever.**
 
-    ```bash
-    git clone git@github.com:filius-fall/control-tuya-devices.git
-    cd control-tuya-devices
-    ```
+### Manual Setup (alternative)
 
-2. Use Poetry to install dependencies:
+If you prefer not to use the wizard:
 
-    ```bash
-    poetry install
-    ```
+1. Copy `.env.example` to `.env` and fill in your credentials
+2. Get credentials from [Tuya IoT Platform](https://iot.tuya.com)
+3. Run `uv run python run.py setup`
 
-This will create a virtual environment and install all required packages listed in `pyproject.toml`.
-
-### Step 3: Setting Up Tuya API Credentials
-
-1. Go to the [Tuya Developer Platform](https://developer.tuya.com/).
-2. Log in or create an account if you don't have one.
-3. Navigate to **Cloud** in the sidebar.
-4. If you already have a project, select it. If not, create a new project:
-    - Click **Create Project**.
-    - Choose the appropriate **Development Method** and **Data Center Region** (such as `in`, `eu`, etc.).
-5. In your project, you will see the **Client ID** and **Client Secret** on the dashboard.
-
-### Step 4: Configure Environment Variables
-
-Create a `.env` file in the root of your project directory, and add the following credentials:
+## Usage
 
 ```bash
-CLIENTKEY="<API Client ID from Tuya dashboard>"
-CLIENTSECRET="<API Client Secret from Tuya dashboard>"
-APIREGION="<region selected during project creation, e.g., 'in', 'eu'>"
+uv run python run.py poll          # Poll all devices once (local only)
+uv run python run.py poll 60       # Poll every 60 seconds (local only)
+uv run python run.py list          # List saved devices
 ```
 
-### Step 5: Running the Project
+Press `Ctrl+C` to stop continuous polling.
 
-Once the environment variables are configured, you can run the project by using:
+## Output
 
-```bash
-poetry run python run.py
+Readings are saved to `data/readings/<device_name>.jsonl` — one JSON line per reading:
+
+```json
+{
+  "timestamp": "2026-05-01T14:30:00+0530",
+  "data": {
+    "voltage_v": 240.8,
+    "current_ma": 1177,
+    "power_w": 173.0,
+    "energy_wh": 0.029,
+    "switch_1": true
+  }
+}
 ```
+
+## Architecture
+
+```
+setup (cloud, one-time)     poll (local, no internet)
+       │                            │
+  Tuya Cloud API              tinytuya.Device
+       │                       (local TCP)
+       ▼                            │
+ data/devices.json ───────────────▶ data/readings/*.jsonl
+```
+
+## Troubleshooting
+
+| Issue | Fix |
+|-------|-----|
+| "plan expired" | Create a new Tuya developer account |
+| 0 devices found | Link your Smart Life app in the Tuya IoT project |
+| Device timeout | Make sure device is on the same WiFi network |
+| Permission denied | Link app account to the correct project |
 
 ---

@@ -1,47 +1,47 @@
-import os
-import json
+import sys
 
-from . import logger
-from . import api_client
-
-
-def read_json_array(file_path):
-    if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-        return []
-
-    with open(file_path, "r", encoding="utf-8") as file:
-        try:
-            data = json.load(file)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Invalid JSON in {file_path}") from exc
-
-    if not isinstance(data, list):
-        raise ValueError(f"Expected {file_path} to contain a JSON array")
-
-    return data
-
-
-def append_json_array(file_path, item):
-    data = read_json_array(file_path)
-    data.append(item)
-
-    temp_path = f"{file_path}.tmp"
-    with open(temp_path, "w", encoding="utf-8") as file:
-        json.dump(data, file, indent=2)
-        file.write("\n")
-
-    os.replace(temp_path, file_path)
-    return data
+from . import setup as setup_wizard
+from . import local
 
 
 def main():
-    devices = api_client.get_device_details()
+    if len(sys.argv) < 2:
+        print("Usage: uv run python run.py <command> [options]")
+        print()
+        print("Commands:")
+        print("  setup           Interactive setup wizard (needs internet, one-time)")
+        print("  poll            Poll all devices once (local only)")
+        print("  poll <seconds>  Poll all devices continuously at interval (local only)")
+        print("  list            List saved devices")
+        sys.exit(1)
 
-    os.makedirs("data", exist_ok=True)
-    file_path = os.path.join("data", "api_response.json")
+    command = sys.argv[1].lower()
 
-    data = append_json_array(file_path, devices)
-    logger.logs.info("Saved Tuya API response", file_path=file_path, records=len(data))
+    if command == "setup":
+        setup_wizard.run_setup()
+    elif command == "poll":
+        devices = local.load_devices()
+        print(f"Loaded {len(devices)} device(s) from local cache")
+
+        interval = None
+        if len(sys.argv) > 2:
+            try:
+                interval = int(sys.argv[2])
+            except ValueError:
+                print("Error: interval must be a number of seconds")
+                sys.exit(1)
+
+        if interval is not None:
+            local.poll_continuously(interval_seconds=interval, devices=devices)
+        else:
+            results = local.poll_all_once(devices)
+            print(f"Polled {len(results)} device(s)")
+    elif command == "list":
+        local.cmd_list()
+    else:
+        print(f"Unknown command: {command}")
+        print("Use 'setup', 'poll', or 'list'")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

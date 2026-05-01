@@ -37,23 +37,66 @@ def cmd_status():
     print_device_table(switches, statuses, title="Current Status")
 
 
+def _render_refresh_changes(changes: list[dict[str, str]]) -> None:
+    if not changes:
+        return
+
+    updated = [c for c in changes if c["change"] == "updated"]
+    inserted = [c for c in changes if c["change"] == "inserted"]
+    unchanged = [c for c in changes if c["change"] == "unchanged"]
+
+    if inserted:
+        console.print(f"[green]{len(inserted)} inserted[/green]")
+        for item in inserted:
+            console.print(
+                f"  [green]+[/green] {item['name']} [dim]({item['device_id']})[/dim]"
+            )
+    if updated:
+        console.print(f"[yellow]{len(updated)} updated[/yellow]")
+        for item in updated:
+            console.print(
+                f"  [yellow]~[/yellow] {item['name']} [dim]({item['device_id']})[/dim]"
+            )
+    if unchanged:
+        console.print(f"[dim]{len(unchanged)} unchanged[/dim]")
+
+
 def cmd_setup(args):
     """Refresh the SQLite device cache from Tuya Cloud and optional LAN scan."""
     try:
-        devices = setup_module.refresh_devices(scan=args.scan)
+        devices, changes = setup_module.refresh_devices(scan=args.scan)
         console.print(
             f"[green]Refreshed {len(devices)} devices into SQLite cache.[/green]"
         )
+        _render_refresh_changes(changes)
     except Exception as exc:
         print_error(str(exc))
         sys.exit(1)
 
 
+def _fmt_local_time(value: str | None) -> str:
+    if not value:
+        return "—"
+    try:
+        from datetime import datetime
+
+        return (
+            datetime.fromisoformat(value)
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M:%S %Z")
+        )
+    except Exception:
+        return str(value)
+
+
 def cmd_list_devices(args):
     """List cached devices, optionally refreshing from cloud first."""
+    changes_by_id = {}
     try:
         if args.refresh:
-            devices = setup_module.refresh_devices(scan=args.scan)
+            devices, changes = setup_module.refresh_devices(scan=args.scan)
+            changes_by_id = {c["device_id"]: c["change"] for c in changes}
+            _render_refresh_changes(changes)
         else:
             devices = device_store.get_devices()
     except Exception as exc:
@@ -79,9 +122,13 @@ def cmd_list_devices(args):
     table.add_column("IP")
     table.add_column("Version")
     table.add_column("Local Key", justify="center")
+    table.add_column("Added", style="dim")
+    table.add_column("Updated", style="dim")
 
     for dev in devices:
         local_key = dev.get("local_key") or dev.get("key") or ""
+        change = changes_by_id.get(dev.get("id", ""), "")
+        row_style = "green" if change == "inserted" else ("yellow" if change == "updated" else "")
         table.add_row(
             dev.get("name", "unknown"),
             dev.get("id", ""),
@@ -89,6 +136,9 @@ def cmd_list_devices(args):
             dev.get("ip") or dev.get("last_ip") or "—",
             str(dev.get("version") or "3.3"),
             "yes" if local_key else "no",
+            _fmt_local_time(dev.get("created_at")),
+            _fmt_local_time(dev.get("updated_at")),
+            style=row_style,
         )
 
     console.print(table)

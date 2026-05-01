@@ -370,6 +370,8 @@ def index():
                 "id": dev_id,
                 "name": dev.get("name", "unknown"),
                 "room": room,
+                "created_at": dev.get("created_at"),
+                "updated_at": dev.get("updated_at"),
             }
         )
 

@@ -318,6 +318,33 @@ body {
   margin-bottom: 20px;
 }
 
+.card-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.card-meta > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.meta-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+}
+
+.meta-value {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .metric {
   display: flex;
   flex-direction: column;

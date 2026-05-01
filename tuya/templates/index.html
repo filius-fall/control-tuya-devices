@@ -81,6 +81,8 @@
     data-name="{{ dev.name | lower }}"
     data-room="{{ dev.room | lower }}"
     data-loading="true"
+    data-created-at="{{ dev.created_at or '' }}"
+    data-updated-at="{{ dev.updated_at or '' }}"
   >
     <div class="card-header">
       <div class="card-title">
@@ -109,6 +111,11 @@
         <span class="metric-label">Energy</span>
         <span class="metric-value energy">—</span>
       </div>
+    </div>
+
+    <div class="card-meta">
+      <div><span class="meta-label">Added</span><span class="meta-value js-created-at">—</span></div>
+      <div><span class="meta-label">Updated</span><span class="meta-value js-updated-at">—</span></div>
     </div>
   </article>
   {% endfor %}
@@ -235,6 +242,24 @@
     });
 
     visibleCards.forEach(card => dashboard.appendChild(card));
+  }
+
+  function formatLocalTime(value) {
+    if (!value) return '—';
+    const dt = new Date(value);
+    if (Number.isNaN(dt.getTime())) return value;
+    return new Intl.DateTimeFormat(undefined, {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      timeZoneName: 'short'
+    }).format(dt);
+  }
+
+  function hydrateCardMeta(card) {
+    const createdEl = card.querySelector('.js-created-at');
+    const updatedEl = card.querySelector('.js-updated-at');
+    if (createdEl) createdEl.textContent = formatLocalTime(card.dataset.createdAt);
+    if (updatedEl) updatedEl.textContent = formatLocalTime(card.dataset.updatedAt);
   }
 
   function updateCounts() {
@@ -441,6 +466,7 @@
   // -------------------------------------------------------------------------
   // Init
   // -------------------------------------------------------------------------
+  cards.forEach(hydrateCardMeta);
   readFiltersFromURL();
   applyFilters();
   applySort();

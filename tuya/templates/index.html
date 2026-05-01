@@ -325,6 +325,10 @@
   function applySort() {
     const visibleCards = cards.filter(c => c.style.display !== 'none');
     visibleCards.sort((a, b) => {
+      const aEnabled = a.dataset.enabled === 'true';
+      const bEnabled = b.dataset.enabled === 'true';
+      if (aEnabled !== bEnabled) return aEnabled ? -1 : 1;
+
       let va = a.dataset[sortKey];
       let vb = b.dataset[sortKey];
       if (['power', 'current', 'voltage', 'energy'].includes(sortKey)) {

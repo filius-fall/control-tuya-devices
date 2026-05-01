@@ -134,6 +134,34 @@ class PollResult:
     event: Optional[Dict[str, Any]] = None
 
 
+@dataclass
+class WebhookConfig:
+    urls: List[str] = field(default_factory=list)
+    timeout: int = 10
+    retries: int = 3
+    retry_delay: float = 1.0
+    batch: bool = True
+
+    @classmethod
+    def from_env(cls) -> WebhookConfig:
+        import os
+
+        raw_urls: str = os.getenv("WEBHOOK_URLS", "")
+        urls: List[str] = [u.strip() for u in raw_urls.split(",") if u.strip()] if raw_urls else []
+
+        return cls(
+            urls=urls,
+            timeout=int(os.getenv("WEBHOOK_TIMEOUT", "10")),
+            retries=int(os.getenv("WEBHOOK_RETRIES", "3")),
+            retry_delay=float(os.getenv("WEBHOOK_RETRY_DELAY", "1.0")),
+            batch=os.getenv("WEBHOOK_BATCH", "true").lower() in ("true", "1", "yes"),
+        )
+
+    @property
+    def enabled(self) -> bool:
+        return len(self.urls) > 0
+
+
 __all__ = [
     "TuyaCredentials",
     "DpsMeta",
@@ -143,4 +171,5 @@ __all__ = [
     "PowerRestoredEvent",
     "DeviceStatus",
     "PollResult",
+    "WebhookConfig",
 ]

@@ -40,6 +40,8 @@ If you prefer not to use the wizard:
 ```bash
 uv run python run.py poll          # Poll all devices once (local only)
 uv run python run.py poll 60       # Poll every 60 seconds (local only)
+uv run python run.py serve         # Always-on service with webhook push
+uv run python run.py serve 30      # Serve mode with 30s interval
 uv run python run.py list          # List saved devices
 uv run python run.py scan          # Update device IPs via local scan (no internet)
 uv run python run.py refresh       # Re-fetch keys + IPs from cloud (needs internet)
@@ -91,6 +93,7 @@ setup (cloud, one-time)     poll (local, no internet)
 | `scan` | **No** | IPs changed after router reboot (local scan only) |
 | `refresh` | Yes | Keys rotated (rare), needs new credentials |
 | `poll` | **No** | Day-to-day data collection |
+| `serve` | **No** | Always-on service with webhook push |
 | `list` | **No** | Show saved devices |
 
 ## Precautions & Best Practices
@@ -253,6 +256,151 @@ for results in stream_readings(interval_seconds=60, devices=devices):
 | 30s | Good balance for most devices |
 | 60s | Recommended for long-term logging and dashboards |
 | 300s | Low-frequency energy tracking |
+
+## Webhook Push (Built-in)
+
+The `serve` command polls devices and pushes readings to your HTTP endpoint(s) automatically. Configure via environment variables or `.env`:
+
+```bash
+# .env
+WEBHOOK_URLS=http://localhost:8080/api/readings,http://localhost:9091/metrics/job/tuya
+WEBHOOK_TIMEOUT=10
+WEBHOOK_RETRIES=3
+WEBHOOK_RETRY_DELAY=1.0
+WEBHOOK_BATCH=true
+POLL_INTERVAL=60
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WEBHOOK_URLS` | *(empty)* | Comma-separated HTTP endpoints. Leave empty to disable webhooks |
+| `WEBHOOK_TIMEOUT` | `10` | HTTP request timeout in seconds |
+| `WEBHOOK_RETRIES` | `3` | Retry count per request on failure |
+| `WEBHOOK_RETRY_DELAY` | `1.0` | Seconds between retries |
+| `WEBHOOK_BATCH` | `true` | `true` = one POST per poll cycle with all readings. `false` = one POST per device |
+| `POLL_INTERVAL` | `60` | Seconds between poll cycles (also usable as CLI arg: `serve 30`) |
+
+### Webhook Payload
+
+**Batch mode** (`WEBHOOK_BATCH=true`) — one POST per cycle:
+
+```json
+{
+  "readings": [
+    {
+      "timestamp": "2026-05-01T14:30:00+0530",
+      "device_name": "Zebronics_SP116",
+      "device_id": "d714e8...",
+      "ip": "192.168.1.2",
+      "status": "online",
+      "voltage_v": 240.8,
+      "current_ma": 1177,
+      "power_w": 173.0,
+      "energy_wh": 0.029
+    }
+  ],
+  "events": [
+    {
+      "timestamp": "...",
+      "data": {"event": "power_restored", "device_name": "...", "outage_duration_seconds": 3600}
+    }
+  ]
+}
+```
+
+**Individual mode** (`WEBHOOK_BATCH=false`) — one POST per device:
+
+```json
+{
+  "reading": { "timestamp": "...", "device_name": "...", "voltage_v": 240.8, ... },
+  "event": null
+}
+```
+
+### Programmatic Usage
+
+```python
+from tuya import (
+    load_devices, poll_devices, push_webhooks, WebhookConfig,
+)
+
+devices = load_devices()
+config = WebhookConfig(
+    urls=["http://localhost:8080/api/readings"],
+    timeout=10,
+    retries=3,
+    batch=True,
+)
+
+results = poll_devices(devices, save=True)
+stats = push_webhooks(results, config)
+print(f"Sent: {stats['sent']}, Failed: {stats['failed']}")
+```
+
+## Docker
+
+Run as an always-on service with Docker:
+
+```bash
+# Build and run
+docker compose up -d
+
+# View logs
+docker compose logs -f tuya-poll
+
+# Stop
+docker compose down
+```
+
+### Prerequisites
+
+1. Run `setup` locally first to create `data/devices.json` with your device keys
+2. The Docker container uses `network_mode: host` — required for local device communication (Linux only)
+
+### docker-compose.yml
+
+```yaml
+services:
+  tuya-poll:
+    build: .
+    container_name: tuya-poll
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    environment:
+      - POLL_INTERVAL=60
+    volumes:
+      - ./data:/app/data
+```
+
+### Environment Variables
+
+Copy `.env.example` to `.env` and set:
+
+```bash
+# Required for setup/refresh only (container just polls)
+CLIENTKEY="..."
+CLIENTSECRET="..."
+APIREGION="..."
+
+# Webhook endpoints (optional)
+WEBHOOK_URLS="http://your-dashboard:8080/api/readings"
+POLL_INTERVAL=60
+```
+
+### Manual Docker Build
+
+```bash
+docker build -t tuya-poll .
+docker run -d \
+  --name tuya-poll \
+  --network host \
+  --env-file .env \
+  -v $(pwd)/data:/app/data \
+  tuya-poll
+```
+
+> **Note:** `network_mode: host` is required because tinytuya uses UDP broadcast for device discovery and TCP to local device IPs. This only works on Linux Docker hosts. On macOS/Windows, run the service directly with `uv run python run.py serve`.
 
 ## Troubleshooting
 

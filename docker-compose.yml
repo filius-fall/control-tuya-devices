@@ -1,0 +1,11 @@
+services:
+  tuya-poll:
+    build: .
+    container_name: tuya-poll
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    environment:
+      - POLL_INTERVAL=60
+    volumes:
+      - ./data:/app/data
